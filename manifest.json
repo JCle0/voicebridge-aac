@@ -1,0 +1,10 @@
+{
+  name VoiceBridge AAC,
+  short_name VoiceBridge,
+  start_url .index.html,
+  display standalone,
+  orientation landscape,
+  background_color #0f172a,
+  theme_color #1e293b,
+  description Custom local-first communication board
+}
