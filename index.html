@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>VoiceBridge AAC</title>
   <link rel="manifest" href="manifest.json" />
-  <!-- WebGazer for Browser Webcam Eye Tracking -->
-  <script src="https://webgazer.cs.brown.edu/webgazer.js?" defer></script>
   <style>
     :root {
       --bg: #0f172a;
@@ -29,41 +27,35 @@
       display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
     }
 
-    /* Force WebGazer's injected camera box out of the way of top buttons! */
-    #webgazerVideoContainer {
-      position: fixed !important;
-      top: auto !important;
-      bottom: 12px !important;
-      left: auto !important;
-      right: 12px !important;
-      width: 80px !important;
-      height: 106px !important;
-      border-radius: 12px !important;
-      overflow: hidden !important;
-      border: 2px solid var(--accent) !important;
-      z-index: 900 !important;
-      pointer-events: none !important; /* Never block taps underneath! */
-      opacity: 0.85 !important;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.6) !important;
+    /* Native Bottom-Right Camera Preview Box */
+    #camPreviewBox {
+      position: fixed; bottom: 12px; right: 12px;
+      width: 86px; height: 114px; border-radius: 12px;
+      overflow: hidden; border: 3px solid var(--yellow);
+      background: #000; z-index: 900; pointer-events: none;
+      display: none; box-shadow: 0 4px 14px rgba(0,0,0,0.65);
     }
-    #webgazerVideoFeed, #webgazerVideoCanvas, #webgazerFaceOverlay, #webgazerFaceFeedbackBox {
-      width: 100% !important;
-      height: 100% !important;
-      object-fit: cover !important;
-      pointer-events: none !important;
+    #camPreviewBox.active { display: block; }
+    #camPreviewBox.tracking-ok { border-color: var(--green); }
+    body.hide-cam-preview #camPreviewBox {
+      opacity: 0.01; width: 1px; height: 1px;
     }
-    body.hide-cam-preview #webgazerVideoContainer {
-      opacity: 0.01 !important;
-      width: 1px !important;
-      height: 1px !important;
+    #camVideo {
+      width: 100%; height: 100%; object-fit: cover;
+      transform: scaleX(-1); /* Mirror like a natural front camera */
     }
-    #webgazerGazeDot { display: none !important; }
+    #camStatusDot {
+      position: absolute; top: 5px; left: 5px;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--yellow); box-shadow: 0 0 6px #000;
+    }
+    #camPreviewBox.tracking-ok #camStatusDot { background: var(--green); }
 
     /* Gaze Reticle (Floating Eye Pointer) */
     #gazePointer {
-      position: fixed; top: -100px; left: -100px;
-      width: 34px; height: 34px; border-radius: 50%;
-      border: 3px solid var(--accent); background: rgba(56, 189, 248, 0.25);
+      position: fixed; top: 50%; left: 50%;
+      width: 36px; height: 36px; border-radius: 50%;
+      border: 3px solid var(--accent); background: rgba(56, 189, 248, 0.28);
       box-shadow: 0 0 14px var(--accent);
       transform: translate(-50%, -50%);
       pointer-events: none; z-index: 9999; display: none;
@@ -185,7 +177,6 @@
     }
     body.edit-mode .add-tile-card { display: flex; }
 
-    /* Desktop / Tablet Larger Screen Scaling */
     @media (min-width: 768px) {
       .top-bar { flex-direction: row; align-items: center; }
       .top-row-controls { width: auto; }
@@ -225,25 +216,36 @@
 
     /* 5-Point Calibration Overlay */
     #calibrationOverlay {
-      position: fixed; inset: 0; background: rgba(15, 23, 42, 0.96);
+      position: fixed; inset: 0; background: rgba(15, 23, 42, 0.94);
       display: none; z-index: 5000; flex-direction: column;
-      align-items: center; justify-content: center; padding: 20px; text-align: center;
+      align-items: center; justify-content: center; padding: 24px; text-align: center;
     }
     #calibrationOverlay.open { display: flex; }
+    #calibStatusBanner {
+      background: #1e293b; border: 2px solid var(--accent);
+      padding: 10px 16px; border-radius: 10px; font-weight: 700;
+      margin-bottom: 12px; color: #fff; max-width: 360px;
+    }
     .calib-point {
-      position: fixed; width: 52px; height: 52px; border-radius: 50%;
+      position: fixed; width: 58px; height: 58px; border-radius: 50%;
       background: var(--yellow); border: 4px solid #fff;
       cursor: pointer; display: flex; align-items: center; justify-content: center;
-      font-weight: 900; color: #000; font-size: 1.1rem;
+      font-weight: 900; color: #000; font-size: 1.05rem;
       box-shadow: 0 0 20px var(--yellow); z-index: 5010;
     }
-    .calib-point.done { background: var(--green); box-shadow: 0 0 20px var(--green); }
+    .calib-point.done { background: var(--green); box-shadow: 0 0 20px var(--green); color: #fff; }
   </style>
 </head>
 <body>
 
   <!-- Floating Gaze Reticle -->
   <div id="gazePointer"></div>
+
+  <!-- Clean Bottom-Right Camera Preview -->
+  <div id="camPreviewBox">
+    <video id="camVideo" autoplay playsinline muted></video>
+    <div id="camStatusDot"></div>
+  </div>
 
   <!-- Top Sentence & Controls Bar -->
   <div class="top-bar">
@@ -323,12 +325,12 @@
         <label>Tracking Input Mode</label>
         <select id="gazeModeSelect">
           <option value="off">OFF (Standard Touch / Click Only)</option>
+          <option value="webcam">Front Camera AI Eye & Head Tracker (MediaPipe)</option>
           <option value="cursor">Touch-Drag / External Mouse Cursor Dwell</option>
-          <option value="webcam">Front Camera Eye Tracker (Requires 5-Pt Calibration)</option>
         </select>
       </div>
       <div class="field">
-        <label>Camera Preview Box (Webcam Mode)</label>
+        <label>Camera Preview Box</label>
         <select id="camPreviewSelect">
           <option value="corner">Small Corner Thumbnail (Bottom-Right)</option>
           <option value="hidden">Hidden Completely</option>
@@ -340,11 +342,16 @@
                oninput="document.getElementById('dwellTimeVal').textContent = (this.value/1000).toFixed(1)" />
       </div>
       <div class="field">
+        <label>Gaze Sensitivity / Speed: <span id="sensVal">5</span></label>
+        <input type="range" id="sensSlider" min="1" max="10" step="1" value="5"
+               oninput="document.getElementById('sensVal').textContent = this.value" />
+      </div>
+      <div class="field">
         <label>Tremor Smoothing (Higher = steadier gaze dot)</label>
-        <input type="range" id="smoothingSlider" min="1" max="9" step="1" value="5" />
+        <input type="range" id="smoothingSlider" min="1" max="9" step="1" value="6" />
       </div>
       <button class="action-btn btn-gaze" style="justify-content:center; width:100%;" onclick="startCalibration()">
-        🎯 Step 1: Calibrate Front Camera (Required First!)
+        🎯 Calibrate Camera (5 Quick Taps)
       </button>
       <div class="modal-actions">
         <button class="action-btn btn-lock" onclick="closeGazeModal()">Close</button>
@@ -355,9 +362,14 @@
 
   <!-- 5-Point Calibration Screen -->
   <div id="calibrationOverlay">
-    <h2 style="margin-bottom:6px; font-size:1.2rem;">Look directly at each yellow circle and tap it 3 times</h2>
-    <p style="color:#94a3b8; margin-top:0; font-size:0.9rem;">Keep your head steady and look at your finger as you tap each circle until all 5 turn green.</p>
-    <button class="action-btn btn-clear" onclick="finishCalibration()">Done / Exit Calibration</button>
+    <div id="calibStatusBanner">⏳ Starting AI Eye Tracker...</div>
+    <p style="color:#cbd5e1; margin:0 0 14px 0; font-size:0.95rem; max-width:320px;">
+      Look directly at each yellow circle (tilt your eyes/head naturally toward it) and <b>tap it once</b>.
+    </p>
+    <div style="display:flex; gap:10px;">
+      <button class="action-btn btn-lock" onclick="resetDefaultCalibration()">Reset Default</button>
+      <button class="action-btn btn-clear" onclick="finishCalibration()">Close</button>
+    </div>
     <div id="calibPointsContainer"></div>
   </div>
 

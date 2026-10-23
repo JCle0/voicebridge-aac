@@ -32,7 +32,6 @@ let currentCategory = 'Core Needs';
 let stripItems = [];
 let editMode = false;
 
-// Tile Size Presets (Compact 3-col, Standard 2-col on phone, Large 1-col)
 const SIZE_PRESETS = [
   { name: 'Standard', min: '155px', height: '140px', emoji: '3.1rem', font: '1.2rem' },
   { name: 'Compact',  min: '115px', height: '110px', emoji: '2.4rem', font: '1.0rem' },
@@ -40,17 +39,17 @@ const SIZE_PRESETS = [
 ];
 let currentSizeIdx = 0;
 
-// Tile Editing & Media State
 let editingTileId = null;
 let currentTileImageDataUrl = null;
 let recordedAudioDataUrl = null;
 let mediaRecorder = null;
 let audioChunks = [];
 
-// Eye Tracking & Dwell Engine State
+// Eye Tracking & MediaPipe State
 let gazeMode = 'off';
 let dwellThresholdMs = 1200;
-let smoothingFactor = 0.25;
+let smoothingFactor = 0.2;
+let gazeSensitivity = 5;
 let rawGazeX = window.innerWidth / 2;
 let rawGazeY = window.innerHeight / 2;
 let smoothGazeX = rawGazeX;
@@ -60,7 +59,30 @@ let dwellProgressMs = 0;
 let lastFrameTime = performance.now();
 let cooldownEl = null;
 let cooldownUntil = 0;
-let webgazerActive = false;
+
+// MediaPipe FaceLandmarker instance & live feature vector
+let faceLandmarker = null;
+let mpLoading = false;
+let camStream = null;
+let lastVideoTime = -1;
+let latestFeatX = 0;
+let latestFeatY = 0;
+let faceDetected = false;
+
+// Calibration Mapping State (maps raw feature X/Y to 0..1 screen percentages)
+let calibData = {
+  calibrated: false,
+  centerX: 0,
+  centerY: 0,
+  spanX: 0.16,
+  spanY: 0.12
+};
+
+// Load saved calibration if present
+try {
+  const savedCalib = localStorage.getItem('vb_gaze_calib');
+  if (savedCalib) calibData = JSON.parse(savedCalib);
+} catch (e) {}
 
 // 1. Database Setup
 function initDB() {
@@ -165,7 +187,6 @@ function deleteTileFromDB(id) {
   });
 }
 
-// Tile Size Switcher
 function cycleTileSize() {
   currentSizeIdx = (currentSizeIdx + 1) % SIZE_PRESETS.length;
   const p = SIZE_PRESETS[currentSizeIdx];
@@ -367,7 +388,7 @@ function clearStrip() {
   renderStrip();
 }
 
-// 4. Eye-Tracking & Gaze Dwell Engine (Mobile & Desktop Fixed)
+// 4. MediaPipe 3D Iris & Eye-Gaze Engine
 function openGazeModal() {
   document.getElementById('gazeModal').classList.add('open');
 }
@@ -379,43 +400,177 @@ async function applyGazeSettings() {
   gazeMode = document.getElementById('gazeModeSelect').value;
   const camPreview = document.getElementById('camPreviewSelect').value;
   dwellThresholdMs = parseInt(document.getElementById('dwellTimeSlider').value, 10);
+  gazeSensitivity = parseInt(document.getElementById('sensSlider').value, 10);
   const smoothSlider = parseInt(document.getElementById('smoothingSlider').value, 10);
-  smoothingFactor = (10 - smoothSlider) * 0.05;
+  smoothingFactor = (10 - smoothSlider) * 0.045;
 
   document.body.classList.toggle('hide-cam-preview', camPreview === 'hidden');
   const gazeBtn = document.getElementById('gazeBtn');
+  const camBox = document.getElementById('camPreviewBox');
+
+  closeGazeModal();
 
   if (gazeMode === 'off') {
     document.body.classList.remove('gaze-active');
     gazeBtn.textContent = '👁️ Gaze: OFF';
     gazeBtn.classList.remove('active');
-    if (webgazerActive && window.webgazer) {
-      window.webgazer.pause();
-      const vc = document.getElementById('webgazerVideoContainer');
-      if (vc) vc.style.display = 'none';
-    }
+    camBox.classList.remove('active');
+    stopCameraStream();
     resetAllDwellVisuals();
   } else if (gazeMode === 'cursor') {
     document.body.classList.add('gaze-active');
     gazeBtn.textContent = '👁️ Gaze: Touch/Cursor';
     gazeBtn.classList.add('active');
-    if (webgazerActive && window.webgazer) {
-      window.webgazer.pause();
-      const vc = document.getElementById('webgazerVideoContainer');
-      if (vc) vc.style.display = 'none';
-    }
+    camBox.classList.remove('active');
+    stopCameraStream();
   } else if (gazeMode === 'webcam') {
     document.body.classList.add('gaze-active');
     gazeBtn.textContent = '👁️ Gaze: Cam';
     gazeBtn.classList.add('active');
-    await startWebGazer();
-    const vc = document.getElementById('webgazerVideoContainer');
-    if (vc) vc.style.display = 'block';
+    camBox.classList.add('active');
+    await initMediaPipeCamera();
   }
-  closeGazeModal();
 }
 
-// Mouse movement for PC / Hardware Eye Tracker
+function stopCameraStream() {
+  if (camStream) {
+    camStream.getTracks().forEach(t => t.stop());
+    camStream = null;
+  }
+}
+
+async function initMediaPipeCamera() {
+  const banner = document.getElementById('calibStatusBanner');
+  try {
+    // 1. Start Front Camera Feed immediately
+    if (!camStream) {
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 640 } },
+        audio: false
+      });
+      const videoEl = document.getElementById('camVideo');
+      videoEl.srcObject = camStream;
+      await videoEl.play();
+    }
+
+    // 2. Load Google MediaPipe FaceLandmarker if not already loaded
+    if (!faceLandmarker && !mpLoading) {
+      mpLoading = true;
+      if (banner) banner.textContent = '⏳ Loading Google MediaPipe Iris AI...';
+
+      const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3');
+      const { FaceLandmarker, FilesetResolver } = vision;
+      const filesetResolver = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm'
+      );
+
+      try {
+        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            delegate: 'GPU'
+          },
+          outputFaceBlendshapes: true,
+          runningMode: 'VIDEO',
+          numFaces: 1
+        });
+      } catch (gpuErr) {
+        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
+          baseOptions: {
+            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            delegate: 'CPU'
+          },
+          outputFaceBlendshapes: true,
+          runningMode: 'VIDEO',
+          numFaces: 1
+        });
+      }
+      mpLoading = false;
+    }
+  } catch (err) {
+    mpLoading = false;
+    alert('Camera / Eye Tracker Error: ' + err.message);
+  }
+}
+
+// Extract Combined Eye-Gaze + Iris + Head Pose Feature Vector from MediaPipe
+function processVideoFrame() {
+  if (gazeMode !== 'webcam' || !faceLandmarker || !camStream) return;
+
+  const videoEl = document.getElementById('camVideo');
+  if (videoEl.readyState < 2) return;
+
+  const nowMs = performance.now();
+  if (videoEl.currentTime === lastVideoTime) return;
+  lastVideoTime = videoEl.currentTime;
+
+  const results = faceLandmarker.detectForVideo(videoEl, nowMs);
+  const camBox = document.getElementById('camPreviewBox');
+  const banner = document.getElementById('calibStatusBanner');
+
+  if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+    const L = results.faceLandmarks[0];
+    faceDetected = true;
+    camBox.classList.add('tracking-ok');
+    if (banner && banner.textContent.includes('⏳')) {
+      banner.textContent = '🟢 Eyes Locked! Look at each yellow circle & tap it';
+    }
+
+    // 1. Horizontal Iris Position inside Eye Sockets (Landmarks 468 & 473)
+    const minEx1 = Math.min(L[33].x, L[133].x);
+    const maxEx1 = Math.max(L[33].x, L[133].x);
+    const irisX1 = 0.5 - (L[468].x - minEx1) / Math.max(0.001, maxEx1 - minEx1);
+
+    const minEx2 = Math.min(L[362].x, L[263].x);
+    const maxEx2 = Math.max(L[362].x, L[263].x);
+    const irisX2 = 0.5 - (L[473].x - minEx2) / Math.max(0.001, maxEx2 - minEx2);
+    const irisDX = (irisX1 + irisX2) * 0.5;
+
+    // 2. Head Yaw & Frame Position (Mirrored so looking Right = positive)
+    const cheekMidX = (L[234].x + L[454].x) * 0.5;
+    const headYawX = cheekMidX - L[1].x;
+    const headPosX = 0.5 - L[1].x;
+
+    // 3. Vertical Eye Blendshapes + Head Pitch
+    let lookUp = 0, lookDown = 0, lookLeft = 0, lookRight = 0;
+    if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+      const cats = results.faceBlendshapes[0].categories;
+      for (let i = 0; i < cats.length; i++) {
+        const n = cats[i].categoryName;
+        const s = cats[i].score;
+        if (n === 'eyeLookUpLeft' || n === 'eyeLookUpRight') lookUp += s * 0.5;
+        else if (n === 'eyeLookDownLeft' || n === 'eyeLookDownRight') lookDown += s * 0.5;
+        else if (n === 'eyeLookOutLeft' || n === 'eyeLookInRight') lookRight += s * 0.5;
+        else if (n === 'eyeLookInLeft' || n === 'eyeLookOutRight') lookLeft += s * 0.5;
+      }
+    }
+
+    const cheekMidY = (L[234].y + L[454].y) * 0.5;
+    const headPitchY = (L[1].y - cheekMidY) - 0.04;
+    const headPosY = L[1].y - 0.5;
+
+    // Combined Feature Coordinates (increases looking Right & Down)
+    latestFeatX = (irisDX * 1.6) + ((lookRight - lookLeft) * 0.35) + (headYawX * 1.5) + (headPosX * 0.55);
+    latestFeatY = ((lookDown - lookUp) * 0.45) + (headPitchY * 1.6) + (headPosY * 0.65);
+
+    // Map Feature Vector to Screen Pixels
+    const sensMultiplier = 0.5 + (gazeSensitivity * 0.12); // 0.62x .. 1.7x
+    const effectiveSpanX = Math.max(0.03, calibData.spanX / sensMultiplier);
+    const effectiveSpanY = Math.max(0.03, calibData.spanY / sensMultiplier);
+
+    const normX = 0.5 + (latestFeatX - calibData.centerX) / effectiveSpanX;
+    const normY = 0.5 + (latestFeatY - calibData.centerY) / effectiveSpanY;
+
+    rawGazeX = Math.max(10, Math.min(window.innerWidth - 10, normX * window.innerWidth));
+    rawGazeY = Math.max(10, Math.min(window.innerHeight - 10, normY * window.innerHeight));
+  } else {
+    faceDetected = false;
+    camBox.classList.remove('tracking-ok');
+    if (banner) banner.textContent = '🟡 Center your face in the bottom-right camera box';
+  }
+}
+
+// Mouse / Touch-Drag Dwell Support
 window.addEventListener('mousemove', (e) => {
   if (gazeMode === 'cursor') {
     rawGazeX = e.clientX;
@@ -423,7 +578,6 @@ window.addEventListener('mousemove', (e) => {
   }
 });
 
-// Touch-drag support so you can test Dwell Selection on a Phone/Tablet!
 window.addEventListener('touchmove', (e) => {
   if (gazeMode === 'cursor' && e.touches.length > 0) {
     rawGazeX = e.touches[0].clientX;
@@ -431,43 +585,12 @@ window.addEventListener('touchmove', (e) => {
   }
 }, { passive: true });
 
-// Bridge Mobile Touch Taps into WebGazer's Calibration Engine
 window.addEventListener('touchstart', (e) => {
-  if (e.touches.length > 0) {
-    const tx = e.touches[0].clientX;
-    const ty = e.touches[0].clientY;
-    if (gazeMode === 'cursor') {
-      rawGazeX = tx;
-      rawGazeY = ty;
-    }
-    if (webgazerActive && window.webgazer && typeof window.webgazer.recordScreenPosition === 'function') {
-      window.webgazer.recordScreenPosition(tx, ty, 'click');
-    }
+  if (gazeMode === 'cursor' && e.touches.length > 0) {
+    rawGazeX = e.touches[0].clientX;
+    rawGazeY = e.touches[0].clientY;
   }
 }, { passive: true });
-
-async function startWebGazer() {
-  if (!window.webgazer) {
-    alert('WebGazer library failed to load.');
-    return;
-  }
-  if (!webgazerActive) {
-    await window.webgazer
-      .setRegression('ridge')
-      .setGazeListener((data) => {
-        if (data && gazeMode === 'webcam') {
-          rawGazeX = Math.max(0, Math.min(window.innerWidth, data.x));
-          rawGazeY = Math.max(0, Math.min(window.innerHeight, data.y));
-        }
-      })
-      .begin();
-    // Hide WebGazer's default red dot (we use our smoothed blue reticle)
-    window.webgazer.showPredictionPoints(false);
-    webgazerActive = true;
-  } else {
-    window.webgazer.resume();
-  }
-}
 
 function resetAllDwellVisuals() {
   document.querySelectorAll('.dwell-target').forEach(el => el.style.setProperty('--dwell', 0));
@@ -475,14 +598,16 @@ function resetAllDwellVisuals() {
   dwellProgressMs = 0;
 }
 
+// Continuous 60fps Gaze & Dwell Loop
 function runGazeDwellLoop(now) {
   const dt = now - lastFrameTime;
   lastFrameTime = now;
 
-  // Don't trigger background buttons if a modal or calibration screen is open
-  const modalOpen = document.querySelector('.modal-backdrop.open, #calibrationOverlay.open');
+  if (gazeMode === 'webcam') {
+    processVideoFrame();
+  }
 
-  if (gazeMode !== 'off' && !modalOpen) {
+  if (gazeMode !== 'off') {
     smoothGazeX += (rawGazeX - smoothGazeX) * smoothingFactor;
     smoothGazeY += (rawGazeY - smoothGazeY) * smoothingFactor;
 
@@ -490,94 +615,124 @@ function runGazeDwellLoop(now) {
     pointer.style.left = `${smoothGazeX}px`;
     pointer.style.top = `${smoothGazeY}px`;
 
-    const hitEl = document.elementFromPoint(smoothGazeX, smoothGazeY);
-    const targetEl = hitEl ? hitEl.closest('.dwell-target') : null;
+    const modalOpen = document.querySelector('.modal-backdrop.open, #calibrationOverlay.open');
+    if (!modalOpen) {
+      const hitEl = document.elementFromPoint(smoothGazeX, smoothGazeY);
+      const targetEl = hitEl ? hitEl.closest('.dwell-target') : null;
 
-    if (targetEl && (targetEl !== cooldownEl || now > cooldownUntil)) {
-      if (targetEl === activeDwellEl) {
-        dwellProgressMs += dt;
-      } else {
-        if (activeDwellEl) activeDwellEl.style.setProperty('--dwell', 0);
-        activeDwellEl = targetEl;
-        dwellProgressMs = dt;
+      if (targetEl && (targetEl !== cooldownEl || now > cooldownUntil)) {
+        if (targetEl === activeDwellEl) {
+          dwellProgressMs += dt;
+        } else {
+          if (activeDwellEl) activeDwellEl.style.setProperty('--dwell', 0);
+          activeDwellEl = targetEl;
+          dwellProgressMs = dt;
+        }
+
+        const pct = Math.min(100, (dwellProgressMs / dwellThresholdMs) * 100);
+        activeDwellEl.style.setProperty('--dwell', pct.toFixed(1));
+
+        if (dwellProgressMs >= dwellThresholdMs) {
+          activeDwellEl.style.setProperty('--dwell', 0);
+          cooldownEl = activeDwellEl;
+          cooldownUntil = now + 1500;
+          dwellProgressMs = 0;
+          activeDwellEl.click();
+        }
+      } else if (activeDwellEl) {
+        dwellProgressMs = Math.max(0, dwellProgressMs - dt * 1.6);
+        const pct = (dwellProgressMs / dwellThresholdMs) * 100;
+        activeDwellEl.style.setProperty('--dwell', pct.toFixed(1));
+        if (dwellProgressMs === 0) activeDwellEl = null;
       }
-
-      const pct = Math.min(100, (dwellProgressMs / dwellThresholdMs) * 100);
-      activeDwellEl.style.setProperty('--dwell', pct.toFixed(1));
-
-      if (dwellProgressMs >= dwellThresholdMs) {
-        activeDwellEl.style.setProperty('--dwell', 0);
-        cooldownEl = activeDwellEl;
-        cooldownUntil = now + 1500;
-        dwellProgressMs = 0;
-        activeDwellEl.click();
-      }
-    } else if (activeDwellEl) {
-      dwellProgressMs = Math.max(0, dwellProgressMs - dt * 1.6);
-      const pct = (dwellProgressMs / dwellThresholdMs) * 100;
-      activeDwellEl.style.setProperty('--dwell', pct.toFixed(1));
-      if (dwellProgressMs === 0) activeDwellEl = null;
     }
   }
 
   requestAnimationFrame(runGazeDwellLoop);
 }
 
-// 5-Point Mobile/Desktop Calibration
-async function startCalibration() {
+// 5-Point Instant Calibration (1 Tap Per Circle)
+function startCalibration() {
+  // 1. Open Calibration Overlay FIRST so it never hangs
   closeGazeModal();
-  document.getElementById('gazeModeSelect').value = 'webcam';
-  await applyGazeSettings();
-
-  if (window.webgazer && typeof window.webgazer.clearData === 'function') {
-    window.webgazer.clearData();
-  }
-
   const overlay = document.getElementById('calibrationOverlay');
   const container = document.getElementById('calibPointsContainer');
+  const banner = document.getElementById('calibStatusBanner');
   container.innerHTML = '';
   overlay.classList.add('open');
 
+  banner.textContent = faceDetected
+    ? '🟢 Eyes Locked! Look at each yellow circle & tap it'
+    : '⏳ Starting AI Eye Tracker...';
+
+  // 2. Ensure Webcam Mode is active in background
+  document.getElementById('gazeModeSelect').value = 'webcam';
+  applyGazeSettings();
+
   const coords = [
-    { left: '15%', top: '18%' },
-    { left: '85%', top: '18%' },
-    { left: '50%', top: '50%' },
-    { left: '15%', top: '82%' },
-    { left: '85%', top: '82%' }
+    { id: 'tl', left: '14%', top: '16%' },
+    { id: 'tr', left: '86%', top: '16%' },
+    { id: 'c',  left: '50%', top: '50%' },
+    { id: 'bl', left: '14%', top: '82%' },
+    { id: 'br', left: '86%', top: '82%' }
   ];
 
-  let completedPoints = 0;
+  const samples = {};
+  let completed = 0;
 
   coords.forEach((pos) => {
-    let clicks = 0;
     const pt = document.createElement('div');
     pt.className = 'calib-point';
     pt.style.left = pos.left;
     pt.style.top = pos.top;
     pt.style.transform = 'translate(-50%, -50%)';
-    pt.textContent = '3';
-    pt.onclick = (e) => {
-      const rect = pt.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-      if (window.webgazer && typeof window.webgazer.recordScreenPosition === 'function') {
-        window.webgazer.recordScreenPosition(cx, cy, 'click');
-      }
-      clicks++;
-      const remaining = 3 - clicks;
-      if (remaining > 0) {
-        pt.textContent = remaining;
-      } else if (!pt.classList.contains('done')) {
-        pt.textContent = '✓';
-        pt.classList.add('done');
-        completedPoints++;
-        if (completedPoints >= coords.length) {
-          setTimeout(() => finishCalibration(), 400);
-        }
+    pt.textContent = 'TAP';
+
+    pt.onclick = () => {
+      if (pt.classList.contains('done')) return;
+      samples[pos.id] = { fx: latestFeatX, fy: latestFeatY };
+      pt.textContent = '✓';
+      pt.classList.add('done');
+      completed++;
+
+      if (completed >= coords.length) {
+        // Compute custom center and span from the 5 recorded gaze vectors
+        const allX = Object.values(samples).map(s => s.fx);
+        const allY = Object.values(samples).map(s => s.fy);
+        const minX = Math.min(...allX);
+        const maxX = Math.max(...allX);
+        const minY = Math.min(...allY);
+        const maxY = Math.max(...allY);
+
+        calibData = {
+          calibrated: true,
+          centerX: samples.c ? (samples.c.fx * 0.5 + ((minX + maxX) * 0.25)) : (minX + maxX) * 0.5,
+          centerY: samples.c ? (samples.c.fy * 0.5 + ((minY + maxY) * 0.25)) : (minY + maxY) * 0.5,
+          spanX: Math.max(0.05, (maxX - minX) * 1.15),
+          spanY: Math.max(0.04, (maxY - minY) * 1.15)
+        };
+        try {
+          localStorage.setItem('vb_gaze_calib', JSON.stringify(calibData));
+        } catch (e) {}
+
+        banner.textContent = '✅ Calibration Complete!';
+        setTimeout(() => finishCalibration(), 450);
       }
     };
     container.appendChild(pt);
   });
+}
+
+function resetDefaultCalibration() {
+  calibData = {
+    calibrated: false,
+    centerX: latestFeatX || 0,
+    centerY: latestFeatY || 0,
+    spanX: 0.16,
+    spanY: 0.12
+  };
+  localStorage.removeItem('vb_gaze_calib');
+  finishCalibration();
 }
 
 function finishCalibration() {

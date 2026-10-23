@@ -1,14 +1,18 @@
 self.addEventListener('install', (e) => {
+  self.skipWaiting();
   e.waitUntil(
-    caches.open('voicebridge-v1').then((cache) => {
+    caches.open('voicebridge-v3').then((cache) => {
       return cache.addAll(['./index.html', './app.js', './manifest.json']);
     })
   );
 });
-self.addEventListener('fetch', (e) => {
-  e.respondWith(
-    caches.match(e.request).then((response) => {
-      return response || fetch(e.request);
-    })
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) =>
+      Promise.all(keys.map((k) => k !== 'voicebridge-v3' && caches.delete(k)))
+    )
   );
+});
+self.addEventListener('fetch', (e) => {
+  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
 });
