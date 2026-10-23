@@ -32,6 +32,14 @@ let currentCategory = 'Core Needs';
 let stripItems = [];
 let editMode = false;
 
+// Tile Size Presets (Compact 3-col, Standard 2-col on phone, Large 1-col)
+const SIZE_PRESETS = [
+  { name: 'Standard', min: '155px', height: '140px', emoji: '3.1rem', font: '1.2rem' },
+  { name: 'Compact',  min: '115px', height: '110px', emoji: '2.4rem', font: '1.0rem' },
+  { name: 'Large',    min: '240px', height: '185px', emoji: '4.2rem', font: '1.5rem' }
+];
+let currentSizeIdx = 0;
+
 // Tile Editing & Media State
 let editingTileId = null;
 let currentTileImageDataUrl = null;
@@ -157,7 +165,17 @@ function deleteTileFromDB(id) {
   });
 }
 
-// 2. Render Dynamic Boards & Tiles (with Edit & Delete Controls)
+// Tile Size Switcher
+function cycleTileSize() {
+  currentSizeIdx = (currentSizeIdx + 1) % SIZE_PRESETS.length;
+  const p = SIZE_PRESETS[currentSizeIdx];
+  document.documentElement.style.setProperty('--tile-min', p.min);
+  document.documentElement.style.setProperty('--tile-height', p.height);
+  document.documentElement.style.setProperty('--tile-emoji', p.emoji);
+  document.documentElement.style.setProperty('--tile-font', p.font);
+}
+
+// 2. Render Dynamic Boards & Tiles
 function renderCategories() {
   const bar = document.getElementById('categoryBar');
   bar.innerHTML = '';
@@ -170,11 +188,9 @@ function renderCategories() {
     titleSpan.textContent = board.name;
     btn.appendChild(titleSpan);
 
-    // Rename Board Button (✏️)
     const editBtn = document.createElement('span');
     editBtn.className = 'cat-icon-btn cat-edit-btn';
     editBtn.textContent = '✏️';
-    editBtn.title = 'Rename Board';
     editBtn.onclick = async (e) => {
       e.stopPropagation();
       const newName = prompt('Rename Board:', board.name);
@@ -192,12 +208,10 @@ function renderCategories() {
     };
     btn.appendChild(editBtn);
 
-    // Delete Board Button (✕)
     if (boards.length > 1) {
       const del = document.createElement('span');
       del.className = 'cat-icon-btn cat-del-btn';
       del.textContent = '✕';
-      del.title = 'Delete Board';
       del.onclick = async (e) => {
         e.stopPropagation();
         if (confirm(`Delete board "${board.name}" and all tiles inside it?`)) {
@@ -226,7 +240,7 @@ function renderCategories() {
   addBoardBtn.className = 'add-board-btn';
   addBoardBtn.textContent = '➕ New Board';
   addBoardBtn.onclick = async () => {
-    const name = prompt('Enter a name for the new Board (e.g., TV Shows, Grandma\'s, Outside):');
+    const name = prompt('Enter a name for the new Board:');
     if (!name || !name.trim()) return;
     const cleanName = name.trim();
     if (boards.some(b => b.name.toLowerCase() === cleanName.toLowerCase())) {
@@ -256,22 +270,18 @@ function renderBoard() {
     card.className = 'tile dwell-target';
     card.style.borderColor = tile.color || '#38bdf8';
 
-    // Edit Tile Badge (Top-Left ✏️)
     const editBtn = document.createElement('button');
     editBtn.className = 'tile-badge edit-badge';
     editBtn.textContent = '✏️';
-    editBtn.title = 'Edit Tile';
     editBtn.onclick = (e) => {
       e.stopPropagation();
       openTileModal(tile);
     };
     card.appendChild(editBtn);
 
-    // Delete Tile Badge (Top-Right ✕)
     const delBtn = document.createElement('button');
     delBtn.className = 'tile-badge delete-badge';
     delBtn.textContent = '✕';
-    delBtn.title = 'Delete Tile';
     delBtn.onclick = async (e) => {
       e.stopPropagation();
       if (confirm(`Delete "${tile.label}"?`)) {
@@ -305,7 +315,7 @@ function renderBoard() {
 
   const addCard = document.createElement('div');
   addCard.className = 'tile add-tile-card';
-  addCard.innerHTML = `<div class="tile-visual">➕</div><div class="tile-label">Add New Tile</div>`;
+  addCard.innerHTML = `<div class="tile-visual">➕</div><div class="tile-label">Add Tile</div>`;
   addCard.onclick = () => openTileModal(null);
   grid.appendChild(addCard);
 }
@@ -357,7 +367,7 @@ function clearStrip() {
   renderStrip();
 }
 
-// 4. Eye-Tracking & Gaze Dwell Engine
+// 4. Eye-Tracking & Gaze Dwell Engine (Mobile & Desktop Fixed)
 function openGazeModal() {
   document.getElementById('gazeModal').classList.add('open');
 }
@@ -367,32 +377,45 @@ function closeGazeModal() {
 
 async function applyGazeSettings() {
   gazeMode = document.getElementById('gazeModeSelect').value;
+  const camPreview = document.getElementById('camPreviewSelect').value;
   dwellThresholdMs = parseInt(document.getElementById('dwellTimeSlider').value, 10);
   const smoothSlider = parseInt(document.getElementById('smoothingSlider').value, 10);
   smoothingFactor = (10 - smoothSlider) * 0.05;
 
+  document.body.classList.toggle('hide-cam-preview', camPreview === 'hidden');
   const gazeBtn = document.getElementById('gazeBtn');
 
   if (gazeMode === 'off') {
     document.body.classList.remove('gaze-active');
-    gazeBtn.textContent = '👁️ Eye Gaze: OFF';
+    gazeBtn.textContent = '👁️ Gaze: OFF';
     gazeBtn.classList.remove('active');
-    if (webgazerActive && window.webgazer) window.webgazer.pause();
+    if (webgazerActive && window.webgazer) {
+      window.webgazer.pause();
+      const vc = document.getElementById('webgazerVideoContainer');
+      if (vc) vc.style.display = 'none';
+    }
     resetAllDwellVisuals();
   } else if (gazeMode === 'cursor') {
     document.body.classList.add('gaze-active');
-    gazeBtn.textContent = '👁️ Gaze: External/Cursor';
+    gazeBtn.textContent = '👁️ Gaze: Touch/Cursor';
     gazeBtn.classList.add('active');
-    if (webgazerActive && window.webgazer) window.webgazer.pause();
+    if (webgazerActive && window.webgazer) {
+      window.webgazer.pause();
+      const vc = document.getElementById('webgazerVideoContainer');
+      if (vc) vc.style.display = 'none';
+    }
   } else if (gazeMode === 'webcam') {
     document.body.classList.add('gaze-active');
-    gazeBtn.textContent = '👁️ Gaze: Webcam';
+    gazeBtn.textContent = '👁️ Gaze: Cam';
     gazeBtn.classList.add('active');
     await startWebGazer();
+    const vc = document.getElementById('webgazerVideoContainer');
+    if (vc) vc.style.display = 'block';
   }
   closeGazeModal();
 }
 
+// Mouse movement for PC / Hardware Eye Tracker
 window.addEventListener('mousemove', (e) => {
   if (gazeMode === 'cursor') {
     rawGazeX = e.clientX;
@@ -400,16 +423,32 @@ window.addEventListener('mousemove', (e) => {
   }
 });
 
-window.addEventListener('message', (e) => {
-  if (e.data && typeof e.data.gazeX === 'number' && typeof e.data.gazeY === 'number') {
-    rawGazeX = e.data.gazeX;
-    rawGazeY = e.data.gazeY;
+// Touch-drag support so you can test Dwell Selection on a Phone/Tablet!
+window.addEventListener('touchmove', (e) => {
+  if (gazeMode === 'cursor' && e.touches.length > 0) {
+    rawGazeX = e.touches[0].clientX;
+    rawGazeY = e.touches[0].clientY;
   }
-});
+}, { passive: true });
+
+// Bridge Mobile Touch Taps into WebGazer's Calibration Engine
+window.addEventListener('touchstart', (e) => {
+  if (e.touches.length > 0) {
+    const tx = e.touches[0].clientX;
+    const ty = e.touches[0].clientY;
+    if (gazeMode === 'cursor') {
+      rawGazeX = tx;
+      rawGazeY = ty;
+    }
+    if (webgazerActive && window.webgazer && typeof window.webgazer.recordScreenPosition === 'function') {
+      window.webgazer.recordScreenPosition(tx, ty, 'click');
+    }
+  }
+}, { passive: true });
 
 async function startWebGazer() {
   if (!window.webgazer) {
-    alert('WebGazer library requires an internet connection on first load.');
+    alert('WebGazer library failed to load.');
     return;
   }
   if (!webgazerActive) {
@@ -417,12 +456,13 @@ async function startWebGazer() {
       .setRegression('ridge')
       .setGazeListener((data) => {
         if (data && gazeMode === 'webcam') {
-          rawGazeX = data.x;
-          rawGazeY = data.y;
+          rawGazeX = Math.max(0, Math.min(window.innerWidth, data.x));
+          rawGazeY = Math.max(0, Math.min(window.innerHeight, data.y));
         }
       })
       .begin();
-    window.webgazer.showVideoPreview(false).showPredictionPoints(false);
+    // Hide WebGazer's default red dot (we use our smoothed blue reticle)
+    window.webgazer.showPredictionPoints(false);
     webgazerActive = true;
   } else {
     window.webgazer.resume();
@@ -439,7 +479,10 @@ function runGazeDwellLoop(now) {
   const dt = now - lastFrameTime;
   lastFrameTime = now;
 
-  if (gazeMode !== 'off') {
+  // Don't trigger background buttons if a modal or calibration screen is open
+  const modalOpen = document.querySelector('.modal-backdrop.open, #calibrationOverlay.open');
+
+  if (gazeMode !== 'off' && !modalOpen) {
     smoothGazeX += (rawGazeX - smoothGazeX) * smoothingFactor;
     smoothGazeY += (rawGazeY - smoothGazeY) * smoothingFactor;
 
@@ -480,10 +523,15 @@ function runGazeDwellLoop(now) {
   requestAnimationFrame(runGazeDwellLoop);
 }
 
-function startCalibration() {
+// 5-Point Mobile/Desktop Calibration
+async function startCalibration() {
   closeGazeModal();
   document.getElementById('gazeModeSelect').value = 'webcam';
-  applyGazeSettings();
+  await applyGazeSettings();
+
+  if (window.webgazer && typeof window.webgazer.clearData === 'function') {
+    window.webgazer.clearData();
+  }
 
   const overlay = document.getElementById('calibrationOverlay');
   const container = document.getElementById('calibPointsContainer');
@@ -491,12 +539,14 @@ function startCalibration() {
   overlay.classList.add('open');
 
   const coords = [
-    { left: '12%', top: '18%' },
-    { left: '88%', top: '18%' },
+    { left: '15%', top: '18%' },
+    { left: '85%', top: '18%' },
     { left: '50%', top: '50%' },
-    { left: '12%', top: '85%' },
-    { left: '88%', top: '85%' }
+    { left: '15%', top: '82%' },
+    { left: '85%', top: '82%' }
   ];
+
+  let completedPoints = 0;
 
   coords.forEach((pos) => {
     let clicks = 0;
@@ -506,11 +556,25 @@ function startCalibration() {
     pt.style.top = pos.top;
     pt.style.transform = 'translate(-50%, -50%)';
     pt.textContent = '3';
-    pt.onclick = () => {
+    pt.onclick = (e) => {
+      const rect = pt.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      if (window.webgazer && typeof window.webgazer.recordScreenPosition === 'function') {
+        window.webgazer.recordScreenPosition(cx, cy, 'click');
+      }
       clicks++;
       const remaining = 3 - clicks;
-      pt.textContent = remaining > 0 ? remaining : '✓';
-      if (remaining <= 0) pt.classList.add('done');
+      if (remaining > 0) {
+        pt.textContent = remaining;
+      } else if (!pt.classList.contains('done')) {
+        pt.textContent = '✓';
+        pt.classList.add('done');
+        completedPoints++;
+        if (completedPoints >= coords.length) {
+          setTimeout(() => finishCalibration(), 400);
+        }
+      }
     };
     container.appendChild(pt);
   });
@@ -527,7 +591,7 @@ function toggleEditMode() {
   const lockBtn = document.getElementById('lockBtn');
   const syncBtn = document.getElementById('syncBtn');
   if (editMode) {
-    lockBtn.textContent = '🔓 Edit Mode';
+    lockBtn.textContent = '🔓 Edit';
     lockBtn.classList.add('unlocked');
     syncBtn.style.display = 'flex';
   } else {
@@ -538,7 +602,6 @@ function toggleEditMode() {
 }
 
 function openTileModal(tileToEdit = null) {
-  // Populate Board / Category dropdown
   const catSelect = document.getElementById('tileCategorySelect');
   catSelect.innerHTML = '';
   boards.forEach(b => {
@@ -551,7 +614,6 @@ function openTileModal(tileToEdit = null) {
   document.getElementById('tileImage').value = '';
 
   if (tileToEdit) {
-    // Editing an existing tile
     editingTileId = tileToEdit.id;
     document.getElementById('tileModalTitle').textContent = 'Edit Communication Tile';
     document.getElementById('tileLabel').value = tileToEdit.label;
@@ -562,7 +624,6 @@ function openTileModal(tileToEdit = null) {
     currentTileImageDataUrl = tileToEdit.imageDataUrl || null;
     recordedAudioDataUrl = tileToEdit.audioDataUrl || null;
   } else {
-    // Creating a new tile
     editingTileId = null;
     document.getElementById('tileModalTitle').textContent = 'Add Communication Tile';
     document.getElementById('tileLabel').value = '';
@@ -636,7 +697,7 @@ async function toggleRecording() {
         stream.getTracks().forEach(t => t.stop());
       };
       mediaRecorder.start();
-      btn.textContent = '⏹️ Stop Recording';
+      btn.textContent = '⏹️ Stop';
       btn.classList.add('recording');
       status.textContent = 'Recording now...';
     } catch (err) {
@@ -644,7 +705,7 @@ async function toggleRecording() {
     }
   } else {
     mediaRecorder.stop();
-    btn.textContent = '🎙️ Tap to Record Voice';
+    btn.textContent = '🎙️ Record Voice';
     btn.classList.remove('recording');
   }
 }
