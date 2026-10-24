@@ -225,7 +225,7 @@
     @keyframes pulse { 50% { opacity: 0.6; } }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 
-    /* Bluey Character Fixation Calibration Screen */
+    /* Bluey Character Fixation Calibration Screen (No Text Labels) */
     #calibrationOverlay {
       position: fixed; inset: 0; background: rgba(10, 15, 29, 0.96);
       display: none; z-index: 5000; flex-direction: column;
@@ -240,28 +240,31 @@
     .calib-single-target {
       position: fixed; width: 108px; height: 108px; border-radius: 50%;
       background: radial-gradient(circle, #e0f2fe 0%, #38bdf8 75%, #0284c7 100%);
-      border: 4px solid #fff; cursor: pointer;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
       box-shadow: 0 0 34px var(--accent);
       transform: translate(-50%, -50%); z-index: 5010;
-      animation: targetBounce 1.1s infinite ease-in-out;
+      animation: targetBounce 1.2s infinite ease-in-out;
       transition: left 0.35s ease, top 0.35s ease;
-      padding: 6px;
     }
     .calib-single-target.sampling {
-      background: radial-gradient(circle, #dcfce7 0%, #22c55e 75%, #15803d 100%) !important;
       box-shadow: 0 0 44px var(--green) !important;
-      animation: none; transform: translate(-50%, -50%) scale(1.14);
+      animation: none; transform: translate(-50%, -50%) scale(1.1);
     }
     .calib-char-wrap {
-      width: 72px; height: 72px; display: flex; align-items: center; justify-content: center;
-      pointer-events: none;
+      width: 82px; height: 82px; display: flex; align-items: center; justify-content: center;
+      pointer-events: none; z-index: 2;
     }
-    .calib-ring-pct {
-      font-size: 0.78rem; font-weight: 900; color: #0f172a;
-      background: rgba(255,255,255,0.95); padding: 2px 8px; border-radius: 10px;
-      margin-top: -4px; box-shadow: 0 2px 4px rgba(0,0,0,0.35);
-      pointer-events: none;
+    .calib-progress-svg {
+      position: absolute; inset: -6px; width: 120px; height: 120px;
+      transform: rotate(-90deg); pointer-events: none; z-index: 3;
+    }
+    .calib-progress-bg {
+      fill: none; stroke: rgba(255,255,255,0.35); stroke-width: 6;
+    }
+    .calib-progress-bar {
+      fill: none; stroke: var(--green); stroke-width: 7;
+      stroke-linecap: round; stroke-dasharray: 345; stroke-dashoffset: 345;
+      transition: stroke-dashoffset 0.06s linear;
     }
     #bottomCaptureBtn {
       position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
@@ -272,7 +275,7 @@
     }
     @keyframes targetBounce {
       0%, 100% { transform: translate(-50%, -50%) scale(1); }
-      50% { transform: translate(-50%, -50%) scale(1.15); }
+      50% { transform: translate(-50%, -50%) scale(1.12); }
     }
   </style>
 </head>
@@ -410,7 +413,7 @@
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="action-btn btn-gaze" style="flex:1; height:46px;" onclick="startCalibration(true)">
-          🐾 Bluey Hands-Free Calibrate (Phone)
+          🐾 Bluey Gaze-Lock Calibrate (Auto)
         </button>
         <button class="action-btn" style="flex:1; height:46px; background:#0284c7;" onclick="startCalibration(false)">
           🐾 Bluey Manual Calibrate (PC)
@@ -427,7 +430,7 @@
   <div id="calibrationOverlay">
     <div id="calibStatusBanner">⏳ Starting Camera...</div>
     <p id="calibSubText" style="color:#cbd5e1; margin:0 0 12px 0; font-size:0.9rem; max-width:360px;">
-      Find Bluey and her family with your eyes!
+      Move the blue fixation dot onto each character and hold your gaze!
     </p>
     <div style="display:flex; gap:10px;">
       <button class="action-btn" onclick="resetDefaultCalibration()">Reset Default</button>

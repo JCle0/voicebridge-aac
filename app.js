@@ -69,19 +69,22 @@ let camStream = null;
 let lastVideoTime = -1;
 let latestFeatX = 0;
 let latestFeatY = 0;
+let prevFeatX = 0;
+let prevFeatY = 0;
+let featVelocity = 0;
 let faceDetected = false;
 let activeCalibTrigger = null;
-let calibTimers = [];
+let calibIntervalId = null;
 
-// 5-Point Bilinear Calibration Model
+// 5-Point Calibration Model
 let calibData = {
   calibrated: false,
   centerX: 0,
   centerY: 0,
-  leftSpan: 0.075,
-  rightSpan: 0.075,
-  upSpan: 0.055,
-  downSpan: 0.055,
+  leftSpan: 0.065,
+  rightSpan: 0.065,
+  upSpan: 0.048,
+  downSpan: 0.048,
   pts: null
 };
 
@@ -90,7 +93,7 @@ try {
   if (savedCalib) calibData = JSON.parse(savedCalib);
 } catch (e) {}
 
-// Built-in Vector Illustrations for Bluey, Bingo, Bandit, Chilli & Muffin
+// Built-in Vector Illustrations for Bluey, Bingo, Bandit, Chilli & Muffin (No text labels)
 function getBlueyCharacterSVG(charKey) {
   const configs = {
     bluey: {
@@ -135,27 +138,21 @@ function getBlueyCharacterSVG(charKey) {
     : '';
 
   return `
-    <svg viewBox="0 0 100 100" width="70" height="70" xmlns="http://www.w3.org/2000/svg">
-      <!-- Pointy Heeler Ears -->
+    <svg viewBox="0 0 100 100" width="80" height="80" xmlns="http://www.w3.org/2000/svg">
       <polygon points="16,34 8,6 38,22" fill="${c.patch}" stroke="#0f172a" stroke-width="2.5" stroke-linejoin="round"/>
       <polygon points="18,30 13,12 33,23" fill="${c.innerEar}"/>
       <polygon points="84,34 92,6 62,22" fill="${c.base}" stroke="#0f172a" stroke-width="2.5" stroke-linejoin="round"/>
       <polygon points="82,30 87,12 67,23" fill="${c.innerEar}"/>
-      <!-- Main Head -->
       <rect x="18" y="20" width="64" height="68" rx="26" fill="${c.base}" stroke="#0f172a" stroke-width="2.5"/>
-      <!-- Eye Patches -->
       ${patchesSVG}
-      <!-- Floating Heeler Eyebrows -->
       <rect x="25" y="24" width="14" height="6" rx="3" transform="rotate(-10 32 27)" fill="${c.brow}" stroke="#0f172a" stroke-width="1.5"/>
       <rect x="61" y="24" width="14" height="6" rx="3" transform="rotate(10 68 27)" fill="${c.brow}" stroke="#0f172a" stroke-width="1.5"/>
-      <!-- Big Expressive Eyes -->
       <ellipse cx="35" cy="46" rx="8.5" ry="10.5" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
       <ellipse cx="65" cy="46" rx="8.5" ry="10.5" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
       <circle cx="37" cy="46" r="4.5" fill="#0f172a"/>
       <circle cx="63" cy="46" r="4.5" fill="#0f172a"/>
       <circle cx="38.5" cy="44" r="1.6" fill="#ffffff"/>
       <circle cx="64.5" cy="44" r="1.6" fill="#ffffff"/>
-      <!-- Tan/Cream Muzzle & Smile -->
       <ellipse cx="50" cy="69" rx="24" ry="17" fill="${c.muzzle}" stroke="#0f172a" stroke-width="2"/>
       <ellipse cx="50" cy="61" rx="8" ry="5.5" fill="#0f172a"/>
       <ellipse cx="48" cy="59.5" rx="2.5" ry="1.2" fill="#ffffff" opacity="0.65"/>
@@ -736,6 +733,9 @@ function processVideoFrame() {
       }
     }
 
+    prevFeatX = latestFeatX;
+    prevFeatY = latestFeatY;
+
     if (gazeMode === 'head') {
       latestFeatX = headYaw * 1.45;
       latestFeatY = headPitch * 1.45;
@@ -743,6 +743,10 @@ function processVideoFrame() {
       latestFeatX = (headYaw * 0.95) + (irisX * 0.95) + ((lookRight - lookLeft) * 0.65);
       latestFeatY = (headPitch * 0.95) + (irisY * 0.45) + ((lookDown - lookUp) * 0.70);
     }
+
+    // Measure eye/head movement velocity to detect steady fixation
+    const instVel = Math.hypot(latestFeatX - prevFeatX, latestFeatY - prevFeatY);
+    featVelocity = (featVelocity * 0.7) + (instVel * 0.3);
 
     // 5. 4-Quadrant Interpolation around Calibrated Center
     const sensScale = 0.45 + (gazeSensitivity * 0.115);
@@ -868,12 +872,13 @@ function runGazeDwellLoop(now) {
 }
 
 function clearCalibTimers() {
-  calibTimers.forEach(t => clearTimeout(t));
-  calibTimers.forEach(t => clearInterval(t));
-  calibTimers = [];
+  if (calibIntervalId) {
+    clearInterval(calibIntervalId);
+    calibIntervalId = null;
+  }
 }
 
-// Bluey Character Fixation Calibration (Bluey, Bingo, Bandit, Chilli & Muffin!)
+// Bluey Gaze-Lock Calibration (Requires the fixation dot to actually be on the character!)
 function startCalibration(autoMode = true) {
   clearCalibTimers();
   closeGazeModal();
@@ -894,129 +899,187 @@ function startCalibration(autoMode = true) {
   applyGazeSettings();
 
   subText.textContent = autoMode
-    ? 'Hands-Free Mode: Hold the screen steady and look at Bluey & her family as they pop up!'
-    : 'Manual Mode: Have him look at each Bluey character, then tap the green button below (or press Spacebar)!';
+    ? 'Look at the character to guide the blue fixation dot onto them and fill the green ring!'
+    : 'Look at the character, then tap the green button below (or press Spacebar)!';
 
   bottomBtn.style.display = autoMode ? 'none' : 'block';
 
   const steps = [
-    { id: 'c',  left: '50%', top: '50%', charKey: 'bluey',  name: 'Bluey',  bg: 'radial-gradient(circle, #e0f2fe 0%, #38bdf8 75%, #0284c7 100%)', glow: '#38bdf8' },
-    { id: 'tl', left: '16%', top: '18%', charKey: 'bingo',  name: 'Bingo',  bg: 'radial-gradient(circle, #ffedd5 0%, #fb923c 75%, #ea580c 100%)', glow: '#fb923c' },
-    { id: 'tr', left: '84%', top: '18%', charKey: 'bandit', name: 'Bandit', bg: 'radial-gradient(circle, #dbeafe 0%, #3b82f6 75%, #1d4ed8 100%)', glow: '#3b82f6' },
-    { id: 'bl', left: '16%', top: '80%', charKey: 'chilli', name: 'Chilli', bg: 'radial-gradient(circle, #ffedd5 0%, #f97316 75%, #c2410c 100%)', glow: '#f97316' },
-    { id: 'br', left: '84%', top: '80%', charKey: 'muffin', name: 'Muffin', bg: 'radial-gradient(circle, #fae8ff 0%, #c084fc 75%, #7e22ce 100%)', glow: '#c084fc' }
+    { id: 'c',  pctX: 0.50, pctY: 0.50, left: '50%', top: '50%', charKey: 'bluey',  bg: 'radial-gradient(circle, #e0f2fe 0%, #38bdf8 75%, #0284c7 100%)', glow: '#38bdf8', dirX: 0,  dirY: 0 },
+    { id: 'tl', pctX: 0.16, pctY: 0.18, left: '16%', top: '18%', charKey: 'bingo',  bg: 'radial-gradient(circle, #ffedd5 0%, #fb923c 75%, #ea580c 100%)', glow: '#fb923c', dirX: -1, dirY: -1 },
+    { id: 'tr', pctX: 0.84, pctY: 0.18, left: '84%', top: '18%', charKey: 'bandit', bg: 'radial-gradient(circle, #dbeafe 0%, #3b82f6 75%, #1d4ed8 100%)', glow: '#3b82f6', dirX: 1,  dirY: -1 },
+    { id: 'bl', pctX: 0.16, pctY: 0.80, left: '16%', top: '80%', charKey: 'chilli', bg: 'radial-gradient(circle, #ffedd5 0%, #f97316 75%, #c2410c 100%)', glow: '#f97316', dirX: -1, dirY: 1 },
+    { id: 'br', pctX: 0.84, pctY: 0.80, left: '84%', top: '80%', charKey: 'muffin', bg: 'radial-gradient(circle, #fae8ff 0%, #c084fc 75%, #7e22ce 100%)', glow: '#c084fc', dirX: 1,  dirY: 1 }
   ];
 
   let stepIdx = 0;
-  let isSampling = false;
   const recorded = {};
+  let bufX = [];
+  let bufY = [];
+  let stepStartTime = performance.now();
+  const totalSamplesNeeded = 22;
+  const circumference = 345;
 
   const target = document.createElement('div');
   target.className = 'calib-single-target';
   container.appendChild(target);
 
-  const runStepPrompt = () => {
+  const renderStepTarget = () => {
     const s = steps[stepIdx];
+    bufX = [];
+    bufY = [];
+    stepStartTime = performance.now();
     target.classList.remove('sampling');
     target.style.left = s.left;
     target.style.top = s.top;
     target.style.background = s.bg;
     target.style.boxShadow = `0 0 34px ${s.glow}`;
     target.innerHTML = `
+      <svg class="calib-progress-svg" viewBox="0 0 120 120">
+        <circle class="calib-progress-bg" cx="60" cy="60" r="55"></circle>
+        <circle class="calib-progress-bar" id="calibRingBar" cx="60" cy="60" r="55"></circle>
+      </svg>
       <div class="calib-char-wrap">${getBlueyCharacterSVG(s.charKey)}</div>
-      <span class="calib-ring-pct" id="calibPct">${s.name}</span>
     `;
-    banner.textContent = `🐾 Step ${stepIdx + 1} of 5: Look at ${s.name}!`;
+    banner.textContent = `🐾 Step ${stepIdx + 1} of 5: Hold the fixation dot on the character`;
+  };
 
-    if (autoMode) {
-      const waitLock = setInterval(() => {
-        if (faceDetected && !isSampling) {
-          clearInterval(waitLock);
-          const tId = setTimeout(() => captureCurrentStep(0), 1050);
-          calibTimers.push(tId);
-        }
-      }, 100);
-      calibTimers.push(waitLock);
+  const commitCurrentStep = () => {
+    if (bufX.length < 6) {
+      for (let i = 0; i < 10; i++) {
+        bufX.push(latestFeatX);
+        bufY.push(latestFeatY);
+      }
+    }
+    const sortedX = [...bufX].sort((a, b) => a - b);
+    const sortedY = [...bufY].sort((a, b) => a - b);
+    const trim = Math.min(2, Math.floor(sortedX.length / 4));
+    const cleanX = trim > 0 ? sortedX.slice(trim, -trim) : sortedX;
+    const cleanY = trim > 0 ? sortedY.slice(trim, -trim) : sortedY;
+    const avgX = cleanX.reduce((a, b) => a + b, 0) / cleanX.length;
+    const avgY = cleanY.reduce((a, b) => a + b, 0) / cleanY.length;
+
+    const s = steps[stepIdx];
+    recorded[s.id] = { fx: avgX, fy: avgY };
+
+    if (s.id === 'c') {
+      calibData.centerX = avgX;
+      calibData.centerY = avgY;
+    }
+
+    playBlueyFanfare();
+    stepIdx++;
+
+    if (stepIdx < steps.length) {
+      renderStepTarget();
+    } else {
+      clearCalibTimers();
+      const cx = recorded.c.fx;
+      const cy = recorded.c.fy;
+      const leftAvgX = (recorded.tl.fx + recorded.bl.fx) * 0.5;
+      const rightAvgX = (recorded.tr.fx + recorded.br.fx) * 0.5;
+      const topAvgY = (recorded.tl.fy + recorded.tr.fy) * 0.5;
+      const botAvgY = (recorded.bl.fy + recorded.br.fy) * 0.5;
+
+      calibData = {
+        calibrated: true,
+        centerX: cx,
+        centerY: cy,
+        leftSpan: Math.max(0.018, Math.abs(cx - leftAvgX)),
+        rightSpan: Math.max(0.018, Math.abs(rightAvgX - cx)),
+        upSpan: Math.max(0.015, Math.abs(cy - topAvgY)),
+        downSpan: Math.max(0.015, Math.abs(botAvgY - cy)),
+        pts: recorded
+      };
+
+      try {
+        localStorage.setItem('vb_gaze_calib_v3', JSON.stringify(calibData));
+      } catch (e) {}
+
+      banner.textContent = '🎉 Calibration Complete!';
+      activeCalibTrigger = null;
+      setTimeout(() => finishCalibration(), 550);
     }
   };
 
-  const captureCurrentStep = (settleDelayMs = 220) => {
-    if (isSampling) return;
-    isSampling = true;
+  renderStepTarget();
 
-    const dId = setTimeout(() => {
-      target.classList.add('sampling');
-      playChime(580);
+  // Continuous 30fps Fixation-Dot Check
+  calibIntervalId = setInterval(() => {
+    if (!faceDetected) return;
 
-      const bufX = [];
-      const bufY = [];
-      let count = 0;
-      const totalSamples = 20;
+    const s = steps[stepIdx];
+    const targetX = s.pctX * window.innerWidth;
+    const targetY = s.pctY * window.innerHeight;
+    const elapsed = performance.now() - stepStartTime;
+    const isSteady = featVelocity < 0.012;
 
-      const sampler = setInterval(() => {
-        if (!faceDetected) return;
+    if (autoMode && elapsed > 450 && isSteady) {
+      if (s.id === 'c') {
+        // Guide center calibration zero smoothly toward steady center gaze so dot lands on Bluey
+        calibData.centerX += (latestFeatX - calibData.centerX) * 0.28;
+        calibData.centerY += (latestFeatY - calibData.centerY) * 0.28;
+      } else if (recorded.c) {
+        // Only adapt corner span if user is actually looking into the target's quadrant!
+        const dx = latestFeatX - recorded.c.fx;
+        const dy = latestFeatY - recorded.c.fy;
+        const inQuadX = (s.dirX < 0 && dx < -0.008) || (s.dirX > 0 && dx > 0.008);
+        const inQuadY = (s.dirY < 0 && dy < -0.006) || (s.dirY > 0 && dy > 0.006);
+
+        if (inQuadX && inQuadY) {
+          const sensScale = 0.45 + (gazeSensitivity * 0.115);
+          const desiredSpanX = (Math.abs(dx) / 0.34) * sensScale;
+          const desiredSpanY = (Math.abs(dy) / 0.30) * sensScale;
+          if (s.dirX < 0) calibData.leftSpan += (Math.max(0.018, desiredSpanX) - calibData.leftSpan) * 0.25;
+          if (s.dirX > 0) calibData.rightSpan += (Math.max(0.018, desiredSpanX) - calibData.rightSpan) * 0.25;
+          if (s.dirY < 0) calibData.upSpan += (Math.max(0.015, desiredSpanY) - calibData.upSpan) * 0.25;
+          if (s.dirY > 0) calibData.downSpan += (Math.max(0.015, desiredSpanY) - calibData.downSpan) * 0.25;
+        }
+      }
+    }
+
+    // Check if the blue fixation dot (#gazePointer) is actually on the character circle!
+    const distToTarget = Math.hypot(smoothGazeX - targetX, smoothGazeY - targetY);
+    const hitRadius = Math.max(78, Math.min(window.innerWidth, window.innerHeight) * 0.16);
+    const dotOnTarget = distToTarget <= hitRadius;
+
+    const ringBar = document.getElementById('calibRingBar');
+
+    if (autoMode) {
+      if (dotOnTarget && isSteady && elapsed > 400) {
+        target.classList.add('sampling');
         bufX.push(latestFeatX);
         bufY.push(latestFeatY);
-        count++;
-
-        const pctEl = document.getElementById('calibPct');
-        if (pctEl) pctEl.textContent = `${Math.round((count / totalSamples) * 100)}%`;
-
-        if (count >= totalSamples) {
-          clearInterval(sampler);
-          bufX.sort((a, b) => a - b);
-          bufY.sort((a, b) => a - b);
-          const cleanX = bufX.slice(3, -3);
-          const cleanY = bufY.slice(3, -3);
-          const avgX = cleanX.reduce((a, b) => a + b, 0) / cleanX.length;
-          const avgY = cleanY.reduce((a, b) => a + b, 0) / cleanY.length;
-
-          recorded[steps[stepIdx].id] = { fx: avgX, fy: avgY };
-          playBlueyFanfare();
-
-          stepIdx++;
-          if (stepIdx < steps.length) {
-            isSampling = false;
-            runStepPrompt();
-          } else {
-            const cx = recorded.c.fx;
-            const cy = recorded.c.fy;
-            const leftAvgX = (recorded.tl.fx + recorded.bl.fx) * 0.5;
-            const rightAvgX = (recorded.tr.fx + recorded.br.fx) * 0.5;
-            const topAvgY = (recorded.tl.fy + recorded.tr.fy) * 0.5;
-            const botAvgY = (recorded.bl.fy + recorded.br.fy) * 0.5;
-
-            calibData = {
-              calibrated: true,
-              centerX: cx,
-              centerY: cy,
-              leftSpan: Math.max(0.02, Math.abs(cx - leftAvgX)),
-              rightSpan: Math.max(0.02, Math.abs(rightAvgX - cx)),
-              upSpan: Math.max(0.018, Math.abs(cy - topAvgY)),
-              downSpan: Math.max(0.018, Math.abs(botAvgY - cy)),
-              pts: recorded
-            };
-
-            try {
-              localStorage.setItem('vb_gaze_calib_v3', JSON.stringify(calibData));
-            } catch (e) {}
-
-            banner.textContent = '🎉 For Real Life! Calibration Complete!';
-            activeCalibTrigger = null;
-            setTimeout(() => finishCalibration(), 650);
-          }
+      } else {
+        target.classList.remove('sampling');
+        // Decay samples if fixation dot drifts off the character
+        if (bufX.length > 0) {
+          bufX.pop();
+          bufY.pop();
         }
-      }, 30);
-      calibTimers.push(sampler);
-    }, settleDelayMs);
-    calibTimers.push(dId);
+      }
+
+      const progress = Math.min(1, bufX.length / totalSamplesNeeded);
+      if (ringBar) {
+        ringBar.style.strokeDashoffset = (circumference * (1 - progress)).toFixed(1);
+      }
+
+      if (bufX.length >= totalSamplesNeeded) {
+        commitCurrentStep();
+      }
+    }
+  }, 33);
+
+  // Manual tap / Spacebar capture still works anytime
+  const manualCapture = () => {
+    bufX.push(latestFeatX);
+    bufY.push(latestFeatY);
+    commitCurrentStep();
   };
 
-  target.onclick = () => captureCurrentStep(250);
-  bottomBtn.onclick = () => captureCurrentStep(250);
-  activeCalibTrigger = () => captureCurrentStep(50);
-
-  runStepPrompt();
+  target.onclick = manualCapture;
+  bottomBtn.onclick = manualCapture;
+  activeCalibTrigger = manualCapture;
 }
 
 function resetDefaultCalibration() {
@@ -1025,10 +1088,10 @@ function resetDefaultCalibration() {
     calibrated: false,
     centerX: latestFeatX || 0,
     centerY: latestFeatY || 0,
-    leftSpan: 0.075,
-    rightSpan: 0.075,
-    upSpan: 0.055,
-    downSpan: 0.055,
+    leftSpan: 0.065,
+    rightSpan: 0.065,
+    upSpan: 0.048,
+    downSpan: 0.048,
     pts: null
   };
   localStorage.removeItem('vb_gaze_calib_v3');
