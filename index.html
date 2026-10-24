@@ -203,14 +203,14 @@
     .modal {
       background: var(--panel); padding: 20px; border-radius: 16px;
       width: 92%; max-width: 500px; border: 2px solid #475569;
-      display: flex; flex-direction: column; gap: 12px; max-height: 90dvh; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 11px; max-height: 92dvh; overflow-y: auto;
     }
-    .modal h2 { margin: 0 0 4px 0; font-size: 1.3rem; }
-    .field { display: flex; flex-direction: column; gap: 5px; }
-    .field label { font-weight: 700; font-size: 0.9rem; color: #cbd5e1; }
+    .modal h2 { margin: 0 0 2px 0; font-size: 1.25rem; }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-weight: 700; font-size: 0.88rem; color: #cbd5e1; }
     .field input, .field select {
-      padding: 10px; border-radius: 8px; border: 1px solid #475569;
-      background: #0f172a; color: #fff; font-size: 1rem;
+      padding: 9px; border-radius: 8px; border: 1px solid #475569;
+      background: #0f172a; color: #fff; font-size: 0.95rem;
     }
     .rec-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .btn-record {
@@ -223,12 +223,12 @@
       background: #0f172a; color: #cbd5e1; font-size: 0.85rem; cursor: pointer;
     }
     .invert-row {
-      display: flex; gap: 16px; align-items: center; padding: 6px 0;
-      font-size: 0.9rem; color: #cbd5e1;
+      display: flex; gap: 14px; align-items: center; padding: 4px 0;
+      font-size: 0.88rem; color: #cbd5e1; flex-wrap: wrap;
     }
-    .invert-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .invert-row label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
     @keyframes pulse { 50% { opacity: 0.6; } }
-    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 
     /* Bluey Character Fixation Calibration Screen (No Text Labels) */
     #calibrationOverlay {
@@ -274,9 +274,9 @@
     #bottomCaptureBtn {
       position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
       height: 54px; padding: 0 28px; border-radius: 14px;
-      background: var(--green); color: #fff; font-size: 1.1rem; font-weight: 800;
+      background: var(--green); color: #fff; font-size: 1.05rem; font-weight: 800;
       border: 3px solid #fff; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
-      z-index: 5020; cursor: pointer;
+      z-index: 5020; cursor: pointer; white-space: nowrap;
     }
     @keyframes targetBounce {
       0%, 100% { transform: translate(-50%, -50%) scale(1); }
@@ -396,9 +396,14 @@
         </select>
       </div>
       <div class="field">
-        <label>Gaze Reach / Sensitivity: <span id="sensVal">7</span></label>
-        <input type="range" id="sensSlider" min="1" max="14" step="1" value="7"
-               oninput="document.getElementById('sensVal').textContent = this.value" />
+        <label>Horizontal (Left/Right) Sensitivity: <span id="sensXVal">7</span></label>
+        <input type="range" id="sensXSlider" min="1" max="15" step="1" value="7"
+               oninput="document.getElementById('sensXVal').textContent = this.value" />
+      </div>
+      <div class="field">
+        <label>Vertical (Up/Down) Sensitivity: <span id="sensYVal">9</span></label>
+        <input type="range" id="sensYSlider" min="1" max="15" step="1" value="9"
+               oninput="document.getElementById('sensYVal').textContent = this.value" />
       </div>
       <div class="field">
         <label>1€ Filter Stabilization: <span id="smoothVal">6</span></label>
@@ -411,8 +416,8 @@
                oninput="document.getElementById('dwellTimeVal').textContent = (this.value/1000).toFixed(1)" />
       </div>
       <div class="invert-row">
-        <label><input type="checkbox" id="invertXCheck" /> Invert Left/Right</label>
-        <label><input type="checkbox" id="invertYCheck" /> Invert Up/Down</label>
+        <label><input type="checkbox" id="invertXCheck" /> Flip Left/Right</label>
+        <label><input type="checkbox" id="invertYCheck" /> Flip Up/Down</label>
         <select id="camPreviewSelect" style="margin-left:auto; padding:6px; border-radius:6px; background:#0f172a; color:#fff; border:1px solid #475569;">
           <option value="corner">Show Cam</option>
           <option value="hidden">Hide Cam</option>
@@ -420,10 +425,10 @@
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="action-btn btn-gaze" style="flex:1; height:46px;" onclick="startCalibration(true)">
-          🐾 Bluey Auto-Lock Calibrate (Phone)
+          🐾 Bluey Auto-Lock Calibrate
         </button>
         <button class="action-btn" style="flex:1; height:46px; background:#0284c7;" onclick="startCalibration(false)">
-          🐾 Bluey Button Calibrate (PC/Manual)
+          🐾 Bluey Button Calibrate
         </button>
       </div>
       <div class="modal-actions">
@@ -437,14 +442,14 @@
   <div id="calibrationOverlay">
     <div id="calibStatusBanner">⏳ Starting Camera...</div>
     <p id="calibSubText" style="color:#cbd5e1; margin:0 0 12px 0; font-size:0.9rem; max-width:360px;">
-      Look steadily at each character—the blue dot will lock onto them and fill the green ring!
+      Look steadily at each character—or tap the character / bottom button while looking at it!
     </p>
     <div style="display:flex; gap:10px;">
       <button class="action-btn" onclick="resetDefaultCalibration()">Reset Default</button>
       <button class="action-btn" style="background:var(--red);" onclick="finishCalibration()">Exit</button>
     </div>
     <div id="calibTargetContainer"></div>
-    <button id="bottomCaptureBtn" style="display:none;">🐾 Tap Here (or Spacebar) While Looking!</button>
+    <button id="bottomCaptureBtn">🐾 Tap Here (or Spacebar) While Looking!</button>
   </div>
 
   <!-- Backup / Multi-Device Sync Modal -->
