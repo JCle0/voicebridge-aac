@@ -69,7 +69,7 @@
       height: 100%; width: calc(var(--dwell, 0) * 1%);
       background: rgba(56, 189, 248, 0.28);
       border-right: 4px solid var(--accent);
-      pointer-events: none; transition: width 0.05s linear;
+      pointer-events: none; transition: width 0.04s linear;
     }
 
     /* Clean Top Control Bar */
@@ -222,6 +222,11 @@
       padding: 8px 10px; border-radius: 8px; border: 1px solid #64748b;
       background: #0f172a; color: #cbd5e1; font-size: 0.85rem; cursor: pointer;
     }
+    .invert-row {
+      display: flex; gap: 16px; align-items: center; padding: 6px 0;
+      font-size: 0.9rem; color: #cbd5e1;
+    }
+    .invert-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
     @keyframes pulse { 50% { opacity: 0.6; } }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 
@@ -264,7 +269,7 @@
     .calib-progress-bar {
       fill: none; stroke: var(--green); stroke-width: 7;
       stroke-linecap: round; stroke-dasharray: 345; stroke-dashoffset: 345;
-      transition: stroke-dashoffset 0.06s linear;
+      transition: stroke-dashoffset 0.05s linear;
     }
     #bottomCaptureBtn {
       position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
@@ -373,50 +378,52 @@
     <div class="modal">
       <h2>👁️ Mobile & PC Eye Gaze Setup</h2>
       <div class="field">
-        <label>Tracking Input Mode</label>
+        <label>Tracking Style</label>
         <select id="gazeModeSelect">
           <option value="off">OFF (Standard Touch / Click Only)</option>
-          <option value="webcam">Camera AI: Blended Eye + Head (Best for Phone & Elgato)</option>
-          <option value="head">Camera AI: Steady Head-Pointing (Tremor-Proof)</option>
-          <option value="cursor">External Eye Tracker / Cursor (Beam Eye Tracker / Mouse)</option>
+          <option value="webcam">Blended Eye + Natural Head Turn (Recommended)</option>
+          <option value="eyes">High-Gain Pure Eye Gaze (Head Still on Phone)</option>
+          <option value="head">Nose / Head Laser Pointer (100% Pinpoint Control)</option>
+          <option value="cursor">External Eye Tracker / Cursor (Beam / Mouse)</option>
         </select>
       </div>
       <div class="field">
-        <label>Magnetic Tile Snap (Helps lock onto tiles on phones)</label>
+        <label>Magnetic Tile Snap (Locks dot onto tiles on small screens)</label>
         <select id="snapSelect">
-          <option value="medium">Medium Gravity (Recommended for Mobile)</option>
-          <option value="strong">Strong Gravity (Best for High Tremor)</option>
+          <option value="medium">Medium Gravity (Recommended)</option>
+          <option value="strong">Strong Gravity (Locks Strongly to Tile Centers)</option>
           <option value="off">Off (Raw Unassisted Cursor)</option>
         </select>
       </div>
       <div class="field">
-        <label>Camera Preview Box</label>
-        <select id="camPreviewSelect">
-          <option value="corner">Small Corner Thumbnail (Bottom-Right)</option>
-          <option value="hidden">Hidden Completely</option>
-        </select>
+        <label>Gaze Reach / Sensitivity: <span id="sensVal">7</span></label>
+        <input type="range" id="sensSlider" min="1" max="14" step="1" value="7"
+               oninput="document.getElementById('sensVal').textContent = this.value" />
+      </div>
+      <div class="field">
+        <label>1€ Filter Stabilization: <span id="smoothVal">6</span></label>
+        <input type="range" id="smoothingSlider" min="1" max="9" step="1" value="6"
+               oninput="document.getElementById('smoothVal').textContent = this.value" />
       </div>
       <div class="field">
         <label>Dwell Hold Time: <span id="dwellTimeVal">1.1</span> seconds</label>
         <input type="range" id="dwellTimeSlider" min="400" max="2500" step="100" value="1100"
                oninput="document.getElementById('dwellTimeVal').textContent = (this.value/1000).toFixed(1)" />
       </div>
-      <div class="field">
-        <label>Gaze Reach / Sensitivity: <span id="sensVal">6</span></label>
-        <input type="range" id="sensSlider" min="1" max="12" step="1" value="6"
-               oninput="document.getElementById('sensVal').textContent = this.value" />
-      </div>
-      <div class="field">
-        <label>Tremor Smoothing: <span id="smoothVal">6</span></label>
-        <input type="range" id="smoothingSlider" min="1" max="9" step="1" value="6"
-               oninput="document.getElementById('smoothVal').textContent = this.value" />
+      <div class="invert-row">
+        <label><input type="checkbox" id="invertXCheck" /> Invert Left/Right</label>
+        <label><input type="checkbox" id="invertYCheck" /> Invert Up/Down</label>
+        <select id="camPreviewSelect" style="margin-left:auto; padding:6px; border-radius:6px; background:#0f172a; color:#fff; border:1px solid #475569;">
+          <option value="corner">Show Cam</option>
+          <option value="hidden">Hide Cam</option>
+        </select>
       </div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button class="action-btn btn-gaze" style="flex:1; height:46px;" onclick="startCalibration(true)">
-          🐾 Bluey Gaze-Lock Calibrate (Auto)
+          🐾 Bluey Auto-Lock Calibrate (Phone)
         </button>
         <button class="action-btn" style="flex:1; height:46px; background:#0284c7;" onclick="startCalibration(false)">
-          🐾 Bluey Manual Calibrate (PC)
+          🐾 Bluey Button Calibrate (PC/Manual)
         </button>
       </div>
       <div class="modal-actions">
@@ -430,14 +437,14 @@
   <div id="calibrationOverlay">
     <div id="calibStatusBanner">⏳ Starting Camera...</div>
     <p id="calibSubText" style="color:#cbd5e1; margin:0 0 12px 0; font-size:0.9rem; max-width:360px;">
-      Move the blue fixation dot onto each character and hold your gaze!
+      Look steadily at each character—the blue dot will lock onto them and fill the green ring!
     </p>
     <div style="display:flex; gap:10px;">
       <button class="action-btn" onclick="resetDefaultCalibration()">Reset Default</button>
       <button class="action-btn" style="background:var(--red);" onclick="finishCalibration()">Exit</button>
     </div>
     <div id="calibTargetContainer"></div>
-    <button id="bottomCaptureBtn" style="display:none;">🐾 Tap Here (or Spacebar) When Looking!</button>
+    <button id="bottomCaptureBtn" style="display:none;">🐾 Tap Here (or Spacebar) While Looking!</button>
   </div>
 
   <!-- Backup / Multi-Device Sync Modal -->

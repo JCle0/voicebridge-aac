@@ -46,50 +46,62 @@ let recordedAudioDataUrl = null;
 let mediaRecorder = null;
 let audioChunks = [];
 
-// Eye Tracking & MediaPipe State
-let gazeMode = 'off'; // 'off' | 'webcam' | 'head' | 'cursor'
+// Eye Tracking & 1€ Velocity Filter State
+let gazeMode = 'off'; // 'off' | 'webcam' | 'eyes' | 'head' | 'cursor'
 let snapStrength = 'medium'; // 'off' | 'medium' | 'strong'
 let dwellThresholdMs = 1100;
-let smoothingFactor = 0.18;
-let gazeSensitivity = 6;
+let filterStabilization = 6;
+let gazeSensitivity = 7;
+let invertX = false;
+let invertY = false;
+
 let rawGazeX = window.innerWidth / 2;
 let rawGazeY = window.innerHeight / 2;
 let smoothGazeX = rawGazeX;
 let smoothGazeY = rawGazeY;
+let prevSmoothX = rawGazeX;
+let prevSmoothY = rawGazeY;
+
+// Magnet Lock During Calibration
+let calibMagnetActive = false;
+let calibMagnetX = 0;
+let calibMagnetY = 0;
+
 let activeDwellEl = null;
 let dwellProgressMs = 0;
 let lastFrameTime = performance.now();
 let cooldownEl = null;
 let cooldownUntil = 0;
 
-// MediaPipe FaceLandmarker instance & roll-compensated feature vector
+// MediaPipe FaceLandmarker instance & live feature vector
 let faceLandmarker = null;
 let mpLoading = false;
 let camStream = null;
 let lastVideoTime = -1;
 let latestFeatX = 0;
 let latestFeatY = 0;
-let prevFeatX = 0;
-let prevFeatY = 0;
+let smoothFeatX = 0;
+let smoothFeatY = 0;
 let featVelocity = 0;
 let faceDetected = false;
 let activeCalibTrigger = null;
 let calibIntervalId = null;
 
-// 5-Point Calibration Model
+// 2D Cross-Axis Affine Calibration Model
 let calibData = {
   calibrated: false,
   centerX: 0,
   centerY: 0,
-  leftSpan: 0.065,
-  rightSpan: 0.065,
-  upSpan: 0.048,
-  downSpan: 0.048,
+  leftSpan: 0.055,
+  rightSpan: 0.055,
+  upSpan: 0.042,
+  downSpan: 0.042,
+  matrix: null, // [m00, m01, m10, m11] mapping (dx, dy) -> screen (du, dv)
   pts: null
 };
 
 try {
-  const savedCalib = localStorage.getItem('vb_gaze_calib_v3');
+  const savedCalib = localStorage.getItem('vb_gaze_calib_v4');
   if (savedCalib) calibData = JSON.parse(savedCalib);
 } catch (e) {}
 
@@ -506,7 +518,7 @@ function clearStrip() {
   renderStrip();
 }
 
-// 4. Roll-Compensated Mobile & Desktop Eye-Gaze Engine
+// 4. Unified Anatomical Eye + Head Engine with 1€ Filter & 2D Affine Solver
 function openGazeModal() {
   document.getElementById('gazeModal').classList.add('open');
 }
@@ -520,8 +532,9 @@ async function applyGazeSettings() {
   const camPreview = document.getElementById('camPreviewSelect').value;
   dwellThresholdMs = parseInt(document.getElementById('dwellTimeSlider').value, 10);
   gazeSensitivity = parseInt(document.getElementById('sensSlider').value, 10);
-  const smoothSlider = parseInt(document.getElementById('smoothingSlider').value, 10);
-  smoothingFactor = (10 - smoothSlider) * 0.038;
+  filterStabilization = parseInt(document.getElementById('smoothingSlider').value, 10);
+  invertX = document.getElementById('invertXCheck').checked;
+  invertY = document.getElementById('invertYCheck').checked;
 
   document.body.classList.toggle('hide-cam-preview', camPreview === 'hidden');
   const gazeBtn = document.getElementById('gazeBtn');
@@ -542,9 +555,10 @@ async function applyGazeSettings() {
     gazeBtn.classList.add('active');
     camBox.classList.remove('active');
     stopCameraStream();
-  } else if (gazeMode === 'webcam' || gazeMode === 'head') {
+  } else {
     document.body.classList.add('gaze-active');
-    gazeBtn.textContent = gazeMode === 'head' ? '👁️ Gaze: Head' : '👁️ Gaze: Cam';
+    const modeLabels = { webcam: '👁️ Gaze: Cam', eyes: '👁️ Gaze: Eyes', head: '👁️ Gaze: Head' };
+    gazeBtn.textContent = modeLabels[gazeMode] || '👁️ Gaze: Cam';
     gazeBtn.classList.add('active');
     camBox.classList.add('active');
     await initMediaPipeCamera();
@@ -552,11 +566,11 @@ async function applyGazeSettings() {
 }
 
 function quickCenterGaze() {
-  if (gazeMode === 'webcam' || gazeMode === 'head') {
-    const shiftX = latestFeatX - calibData.centerX;
-    const shiftY = latestFeatY - calibData.centerY;
-    calibData.centerX = latestFeatX;
-    calibData.centerY = latestFeatY;
+  if (gazeMode !== 'off' && gazeMode !== 'cursor') {
+    const shiftX = smoothFeatX - calibData.centerX;
+    const shiftY = smoothFeatY - calibData.centerY;
+    calibData.centerX = smoothFeatX;
+    calibData.centerY = smoothFeatY;
     if (calibData.pts) {
       Object.keys(calibData.pts).forEach(k => {
         calibData.pts[k].fx += shiftX;
@@ -564,7 +578,7 @@ function quickCenterGaze() {
       });
     }
     try {
-      localStorage.setItem('vb_gaze_calib_v3', JSON.stringify(calibData));
+      localStorage.setItem('vb_gaze_calib_v4', JSON.stringify(calibData));
     } catch (e) {}
   }
   rawGazeX = window.innerWidth / 2;
@@ -649,8 +663,31 @@ function rotateDeRoll(x, y, cosR, sinR) {
   };
 }
 
+// Compute 2x2 Affine Calibration Matrix from the 5 recorded Bluey points
+function buildCalibrationMatrix(rec) {
+  // Average horizontal feature vector from Left to Right of screen (du = +0.68)
+  const dxR = ((rec.tr.fx + rec.br.fx) - (rec.tl.fx + rec.bl.fx)) * 0.5;
+  const dyR = ((rec.tr.fy + rec.br.fy) - (rec.tl.fy + rec.bl.fy)) * 0.5;
+
+  // Average vertical feature vector from Top to Bottom of screen (dv = +0.62)
+  const dxD = ((rec.bl.fx + rec.br.fx) - (rec.tl.fx + rec.tr.fx)) * 0.5;
+  const dyD = ((rec.bl.fy + rec.br.fy) - (rec.tl.fy + rec.tr.fy)) * 0.5;
+
+  const det = (dxR * dyD) - (dxD * dyR);
+  // If matrix is well-conditioned, invert it to solve exact cross-axis mapping
+  if (Math.abs(det) > 0.00015) {
+    return [
+      (0.68 * dyD) / det,
+      (-0.68 * dxD) / det,
+      (-0.62 * dyR) / det,
+      (0.62 * dxR) / det
+    ];
+  }
+  return null;
+}
+
 function processVideoFrame() {
-  if ((gazeMode !== 'webcam' && gazeMode !== 'head') || !faceLandmarker || !camStream) return;
+  if ((gazeMode === 'off' || gazeMode === 'cursor') || !faceLandmarker || !camStream) return;
 
   const videoEl = document.getElementById('camVideo');
   if (videoEl.readyState < 2) return;
@@ -667,7 +704,7 @@ function processVideoFrame() {
     faceDetected = true;
     camBox.classList.add('tracking-ok');
 
-    // 1. Compute Roll Angle between outer eye corners (33 and 263) to cancel phone/head tilt
+    // 1. De-rotate Roll Angle between outer eye corners (33 and 263)
     const dxEye = L[263].x - L[33].x;
     const dyEye = L[263].y - L[33].y;
     const rollAngle = Math.atan2(dyEye, dxEye);
@@ -675,7 +712,7 @@ function processVideoFrame() {
     const sinR = Math.sin(-rollAngle);
     const faceScale = Math.hypot(dxEye, dyEye) || 0.15;
 
-    const origin = L[168];
+    const origin = L[168]; // Bridge between eyes
     const rel = (idx) => rotateDeRoll(
       (L[idx].x - origin.x) / faceScale,
       (L[idx].y - origin.y) / faceScale,
@@ -684,43 +721,38 @@ function processVideoFrame() {
     );
 
     const noseTip = rel(1);
-    const leftOuter = rel(33);
-    const leftInner = rel(133);
-    const leftTop = rel(159);
-    const leftBot = rel(145);
-    const leftIris = rel(468);
+    const rightCheek = rel(234); // Subject's right cheek (left in raw frame)
+    const leftCheek = rel(454);  // Subject's left cheek (right in raw frame)
 
-    const rightInner = rel(362);
-    const rightOuter = rel(263);
-    const rightTop = rel(386);
-    const rightBot = rel(374);
-    const rightIris = rel(473);
+    const rEyeOuter = rel(33);
+    const rEyeInner = rel(133);
+    const rEyeTop = rel(159);
+    const rEyeBot = rel(145);
+    const rIris = rel(468);
 
-    // 2. 3D Head Yaw & Pitch
-    let headYaw = -noseTip.x;
-    let headPitch = noseTip.y - 0.34;
+    const lEyeInner = rel(362);
+    const lEyeOuter = rel(263);
+    const lEyeTop = rel(386);
+    const lEyeBot = rel(374);
+    const lIris = rel(473);
 
-    if (results.facialTransformationMatrixes && results.facialTransformationMatrixes.length > 0) {
-      const m = results.facialTransformationMatrixes[0].data;
-      if (m && m.length >= 16) {
-        const matYaw = -Math.atan2(m[8], m[10]);
-        const matPitch = Math.atan2(m[9], m[10]);
-        headYaw = (headYaw * 0.45) + (matYaw * 0.55);
-        headPitch = (headPitch * 0.45) + (matPitch * 0.55);
-      }
-    }
+    // 2. Unified Head Yaw & Pitch (+X = Looking Right on Screen, +Y = Looking Down on Screen)
+    const cheekMidX = (rightCheek.x + leftCheek.x) * 0.5;
+    const cheekMidY = (rightCheek.y + leftCheek.y) * 0.5;
+    let headYaw = (cheekMidX - noseTip.x); // Positive when turning nose toward Right of screen
+    let headPitch = (noseTip.y - cheekMidY) - 0.10; // Positive when tilting nose Down
 
-    // 3. Roll-Compensated Iris Position inside Eye Sockets
-    const lIrisRatioX = 0.5 - (leftIris.x - leftOuter.x) / Math.max(0.01, leftInner.x - leftOuter.x);
-    const rIrisRatioX = 0.5 - (rightIris.x - rightInner.x) / Math.max(0.01, rightOuter.x - rightInner.x);
-    const irisX = (lIrisRatioX + rIrisRatioX) * 0.5;
+    // 3. Unified Iris Position (+X = Looking Right on Screen, +Y = Looking Down on Screen)
+    const rIrisX = 0.5 - (rIris.x - rEyeOuter.x) / Math.max(0.01, rEyeInner.x - rEyeOuter.x);
+    const lIrisX = 0.5 - (lIris.x - lEyeInner.x) / Math.max(0.01, lEyeOuter.x - lEyeInner.x);
+    const irisX = (rIrisX + lIrisX) * 0.5;
 
-    const lIrisRatioY = (leftIris.y - leftTop.y) / Math.max(0.01, leftBot.y - leftTop.y) - 0.5;
-    const rIrisRatioY = (rightIris.y - rightTop.y) / Math.max(0.01, rightBot.y - rightTop.y) - 0.5;
-    const irisY = (lIrisRatioY + rIrisRatioY) * 0.5;
+    const rIrisY = (rIris.y - rEyeTop.y) / Math.max(0.01, rEyeBot.y - rEyeTop.y) - 0.5;
+    const lIrisY = (lIris.y - lEyeTop.y) / Math.max(0.01, lEyeBot.y - lEyeTop.y) - 0.5;
+    const irisY = (rIrisY + lIrisY) * 0.5;
 
-    // 4. Neural Eye-Gaze Blendshapes
-    let lookUp = 0, lookDown = 0, lookLeft = 0, lookRight = 0;
+    // 4. FIXED Anatomical Eye-Gaze Blendshapes (+X = Right of Screen, +Y = Bottom of Screen)
+    let lookUp = 0, lookDown = 0, lookScreenRight = 0, lookScreenLeft = 0;
     if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
       const cats = results.faceBlendshapes[0].categories;
       for (let i = 0; i < cats.length; i++) {
@@ -728,36 +760,61 @@ function processVideoFrame() {
         const s = cats[i].score;
         if (n === 'eyeLookUpLeft' || n === 'eyeLookUpRight') lookUp += s * 0.5;
         else if (n === 'eyeLookDownLeft' || n === 'eyeLookDownRight') lookDown += s * 0.5;
-        else if (n === 'eyeLookOutLeft' || n === 'eyeLookInRight') lookRight += s * 0.5;
-        else if (n === 'eyeLookInLeft' || n === 'eyeLookOutRight') lookLeft += s * 0.5;
+        // Anatomical Right = Screen Right! (eyeLookOutRight + eyeLookInLeft)
+        else if (n === 'eyeLookOutRight' || n === 'eyeLookInLeft') lookScreenRight += s * 0.5;
+        // Anatomical Left = Screen Left! (eyeLookOutLeft + eyeLookInRight)
+        else if (n === 'eyeLookOutLeft' || n === 'eyeLookInRight') lookScreenLeft += s * 0.5;
       }
     }
 
-    prevFeatX = latestFeatX;
-    prevFeatY = latestFeatY;
+    const blendX = lookScreenRight - lookScreenLeft;
+    const blendY = lookDown - lookUp;
 
+    // Combine according to selected Tracking Style
     if (gazeMode === 'head') {
-      latestFeatX = headYaw * 1.45;
-      latestFeatY = headPitch * 1.45;
+      // Pinpoint Nose / Head Laser Pointer
+      latestFeatX = (headYaw * 1.55) + (blendX * 0.25);
+      latestFeatY = (headPitch * 1.55) + (blendY * 0.25);
+    } else if (gazeMode === 'eyes') {
+      // High-Gain Pure Eye Movement (for holding head completely still in front of phone)
+      latestFeatX = (blendX * 1.45) + (irisX * 1.55) + (headYaw * 0.45);
+      latestFeatY = (blendY * 1.45) + (irisY * 0.75) + (headPitch * 0.45);
     } else {
-      latestFeatX = (headYaw * 0.95) + (irisX * 0.95) + ((lookRight - lookLeft) * 0.65);
-      latestFeatY = (headPitch * 0.95) + (irisY * 0.45) + ((lookDown - lookUp) * 0.70);
+      // Balanced Eye + Natural Head Turn (Both now push in the exact same direction!)
+      latestFeatX = (headYaw * 1.05) + (blendX * 0.95) + (irisX * 1.10);
+      latestFeatY = (headPitch * 1.05) + (blendY * 0.95) + (irisY * 0.55);
     }
 
-    // Measure eye/head movement velocity to detect steady fixation
-    const instVel = Math.hypot(latestFeatX - prevFeatX, latestFeatY - prevFeatY);
-    featVelocity = (featVelocity * 0.7) + (instVel * 0.3);
+    if (invertX) latestFeatX = -latestFeatX;
+    if (invertY) latestFeatY = -latestFeatY;
 
-    // 5. 4-Quadrant Interpolation around Calibrated Center
-    const sensScale = 0.45 + (gazeSensitivity * 0.115);
-    const dx = latestFeatX - calibData.centerX;
-    const dy = latestFeatY - calibData.centerY;
+    // Velocity tracking on pre-smoothed feature vector
+    const instVel = Math.hypot(latestFeatX - smoothFeatX, latestFeatY - smoothFeatY);
+    featVelocity = (featVelocity * 0.65) + (instVel * 0.35);
+    smoothFeatX += (latestFeatX - smoothFeatX) * 0.42;
+    smoothFeatY += (latestFeatY - smoothFeatY) * 0.42;
 
-    const spanX = (dx >= 0 ? calibData.rightSpan : calibData.leftSpan) / sensScale;
-    const spanY = (dy >= 0 ? calibData.downSpan : calibData.upSpan) / sensScale;
+    // 5. Map Feature Offset (dx, dy) to Screen Coordinates
+    const sensScale = 0.40 + (gazeSensitivity * 0.125); // 0.525x .. 2.15x
+    const dx = smoothFeatX - calibData.centerX;
+    const dy = smoothFeatY - calibData.centerY;
 
-    const normX = 0.5 + (dx / Math.max(0.012, spanX)) * 0.40;
-    const normY = 0.5 + (dy / Math.max(0.012, spanY)) * 0.40;
+    let du = 0;
+    let dv = 0;
+
+    if (calibData.calibrated && calibData.matrix) {
+      const m = calibData.matrix;
+      du = (m[0] * dx + m[1] * dy) * (sensScale / 1.15);
+      dv = (m[2] * dx + m[3] * dy) * (sensScale / 1.15);
+    } else {
+      const spanX = (dx >= 0 ? calibData.rightSpan : calibData.leftSpan) / sensScale;
+      const spanY = (dy >= 0 ? calibData.downSpan : calibData.upSpan) / sensScale;
+      du = (dx / Math.max(0.012, spanX)) * 0.40;
+      dv = (dy / Math.max(0.012, spanY)) * 0.40;
+    }
+
+    const normX = 0.5 + du;
+    const normY = 0.5 + dv;
 
     rawGazeX = Math.max(12, Math.min(window.innerWidth - 12, normX * window.innerWidth));
     rawGazeY = Math.max(12, Math.min(window.innerHeight - 12, normY * window.innerHeight));
@@ -797,7 +854,7 @@ function resetAllDwellVisuals() {
 
 function applyMagneticTileSnap(x, y) {
   if (snapStrength === 'off') return { x, y };
-  const pull = snapStrength === 'strong' ? 0.38 : 0.22;
+  const pull = snapStrength === 'strong' ? 0.42 : 0.25;
 
   const hitEl = document.elementFromPoint(x, y);
   const targetEl = hitEl ? hitEl.closest('.dwell-target') : null;
@@ -813,20 +870,40 @@ function applyMagneticTileSnap(x, y) {
   };
 }
 
+// 1€ Filter (One-Euro Velocity-Adaptive Filter): Rock-steady when still, zero lag when moving!
+function computeOneEuroAlpha(dtMs, speedPxPerSec) {
+  const minAlpha = Math.max(0.03, (10 - filterStabilization) * 0.015);
+  const beta = 0.00055; // Speed boost coefficient
+  const dynamicAlpha = minAlpha + beta * speedPxPerSec;
+  return Math.min(0.65, dynamicAlpha * (dtMs / 16.67));
+}
+
 // Continuous 60fps Gaze & Dwell Loop
 function runGazeDwellLoop(now) {
-  const dt = now - lastFrameTime;
+  const dt = Math.min(50, Math.max(4, now - lastFrameTime));
   lastFrameTime = now;
 
-  if (gazeMode === 'webcam' || gazeMode === 'head') {
+  if (gazeMode !== 'off' && gazeMode !== 'cursor') {
     processVideoFrame();
   }
 
   if (gazeMode !== 'off') {
     const modalOpen = document.querySelector('.modal-backdrop.open, #calibrationOverlay.open');
 
-    smoothGazeX += (rawGazeX - smoothGazeX) * smoothingFactor;
-    smoothGazeY += (rawGazeY - smoothGazeY) * smoothingFactor;
+    // During calibration lock, gently pull rawGaze toward the active Bluey character
+    let targetRawX = rawGazeX;
+    let targetRawY = rawGazeY;
+    if (calibMagnetActive) {
+      targetRawX = rawGazeX * 0.2 + calibMagnetX * 0.8;
+      targetRawY = rawGazeY * 0.2 + calibMagnetY * 0.8;
+    }
+
+    const distDelta = Math.hypot(targetRawX - smoothGazeX, targetRawY - smoothGazeY);
+    const speedPxPerSec = (distDelta / dt) * 1000;
+    const alpha = computeOneEuroAlpha(dt, speedPxPerSec);
+
+    smoothGazeX += (targetRawX - smoothGazeX) * alpha;
+    smoothGazeY += (targetRawY - smoothGazeY) * alpha;
 
     const finalPt = !modalOpen
       ? applyMagneticTileSnap(smoothGazeX, smoothGazeY)
@@ -872,13 +949,14 @@ function runGazeDwellLoop(now) {
 }
 
 function clearCalibTimers() {
+  calibMagnetActive = false;
   if (calibIntervalId) {
     clearInterval(calibIntervalId);
     calibIntervalId = null;
   }
 }
 
-// Bluey Gaze-Lock Calibration (Requires the fixation dot to actually be on the character!)
+// Bluey Gaze-Lock Calibration (Locks the fixation dot onto each character when eyes look & hold steady)
 function startCalibration(autoMode = true) {
   clearCalibTimers();
   closeGazeModal();
@@ -899,8 +977,8 @@ function startCalibration(autoMode = true) {
   applyGazeSettings();
 
   subText.textContent = autoMode
-    ? 'Look at the character to guide the blue fixation dot onto them and fill the green ring!'
-    : 'Look at the character, then tap the green button below (or press Spacebar)!';
+    ? 'Look at the character and hold your eyes steady—the blue dot will lock onto them and fill the green ring!'
+    : 'Look at the character, then tap the green button at the bottom (or press Spacebar)!';
 
   bottomBtn.style.display = autoMode ? 'none' : 'block';
 
@@ -917,7 +995,9 @@ function startCalibration(autoMode = true) {
   let bufX = [];
   let bufY = [];
   let stepStartTime = performance.now();
-  const totalSamplesNeeded = 22;
+  let prevRecordedX = null;
+  let prevRecordedY = null;
+  const totalSamplesNeeded = 20;
   const circumference = 345;
 
   const target = document.createElement('div');
@@ -928,6 +1008,7 @@ function startCalibration(autoMode = true) {
     const s = steps[stepIdx];
     bufX = [];
     bufY = [];
+    calibMagnetActive = false;
     stepStartTime = performance.now();
     target.classList.remove('sampling');
     target.style.left = s.left;
@@ -941,14 +1022,15 @@ function startCalibration(autoMode = true) {
       </svg>
       <div class="calib-char-wrap">${getBlueyCharacterSVG(s.charKey)}</div>
     `;
-    banner.textContent = `🐾 Step ${stepIdx + 1} of 5: Hold the fixation dot on the character`;
+    banner.textContent = `🐾 Step ${stepIdx + 1} of 5: Look steadily at the character`;
   };
 
   const commitCurrentStep = () => {
+    calibMagnetActive = false;
     if (bufX.length < 6) {
       for (let i = 0; i < 10; i++) {
-        bufX.push(latestFeatX);
-        bufY.push(latestFeatY);
+        bufX.push(smoothFeatX);
+        bufY.push(smoothFeatY);
       }
     }
     const sortedX = [...bufX].sort((a, b) => a - b);
@@ -961,6 +1043,8 @@ function startCalibration(autoMode = true) {
 
     const s = steps[stepIdx];
     recorded[s.id] = { fx: avgX, fy: avgY };
+    prevRecordedX = avgX;
+    prevRecordedY = avgY;
 
     if (s.id === 'c') {
       calibData.centerX = avgX;
@@ -981,22 +1065,25 @@ function startCalibration(autoMode = true) {
       const topAvgY = (recorded.tl.fy + recorded.tr.fy) * 0.5;
       const botAvgY = (recorded.bl.fy + recorded.br.fy) * 0.5;
 
+      const solvedMatrix = buildCalibrationMatrix(recorded);
+
       calibData = {
         calibrated: true,
         centerX: cx,
         centerY: cy,
-        leftSpan: Math.max(0.018, Math.abs(cx - leftAvgX)),
-        rightSpan: Math.max(0.018, Math.abs(rightAvgX - cx)),
-        upSpan: Math.max(0.015, Math.abs(cy - topAvgY)),
-        downSpan: Math.max(0.015, Math.abs(botAvgY - cy)),
+        leftSpan: Math.max(0.015, Math.abs(cx - leftAvgX)),
+        rightSpan: Math.max(0.015, Math.abs(rightAvgX - cx)),
+        upSpan: Math.max(0.012, Math.abs(cy - topAvgY)),
+        downSpan: Math.max(0.012, Math.abs(botAvgY - cy)),
+        matrix: solvedMatrix,
         pts: recorded
       };
 
       try {
-        localStorage.setItem('vb_gaze_calib_v3', JSON.stringify(calibData));
+        localStorage.setItem('vb_gaze_calib_v4', JSON.stringify(calibData));
       } catch (e) {}
 
-      banner.textContent = '🎉 Calibration Complete!';
+      banner.textContent = '🎉 Calibration Locked In!';
       activeCalibTrigger = null;
       setTimeout(() => finishCalibration(), 550);
     }
@@ -1004,7 +1091,7 @@ function startCalibration(autoMode = true) {
 
   renderStepTarget();
 
-  // Continuous 30fps Fixation-Dot Check
+  // 30fps Gaze-Steady & Directional Shift Detector
   calibIntervalId = setInterval(() => {
     if (!faceDetected) return;
 
@@ -1012,47 +1099,41 @@ function startCalibration(autoMode = true) {
     const targetX = s.pctX * window.innerWidth;
     const targetY = s.pctY * window.innerHeight;
     const elapsed = performance.now() - stepStartTime;
-    const isSteady = featVelocity < 0.012;
 
-    if (autoMode && elapsed > 450 && isSteady) {
-      if (s.id === 'c') {
-        // Guide center calibration zero smoothly toward steady center gaze so dot lands on Bluey
-        calibData.centerX += (latestFeatX - calibData.centerX) * 0.28;
-        calibData.centerY += (latestFeatY - calibData.centerY) * 0.28;
-      } else if (recorded.c) {
-        // Only adapt corner span if user is actually looking into the target's quadrant!
-        const dx = latestFeatX - recorded.c.fx;
-        const dy = latestFeatY - recorded.c.fy;
-        const inQuadX = (s.dirX < 0 && dx < -0.008) || (s.dirX > 0 && dx > 0.008);
-        const inQuadY = (s.dirY < 0 && dy < -0.006) || (s.dirY > 0 && dy > 0.006);
+    // 1. Check that eyes have stopped moving (steady fixation)
+    const isSteady = featVelocity < 0.016;
 
-        if (inQuadX && inQuadY) {
-          const sensScale = 0.45 + (gazeSensitivity * 0.115);
-          const desiredSpanX = (Math.abs(dx) / 0.34) * sensScale;
-          const desiredSpanY = (Math.abs(dy) / 0.30) * sensScale;
-          if (s.dirX < 0) calibData.leftSpan += (Math.max(0.018, desiredSpanX) - calibData.leftSpan) * 0.25;
-          if (s.dirX > 0) calibData.rightSpan += (Math.max(0.018, desiredSpanX) - calibData.rightSpan) * 0.25;
-          if (s.dirY < 0) calibData.upSpan += (Math.max(0.015, desiredSpanY) - calibData.upSpan) * 0.25;
-          if (s.dirY > 0) calibData.downSpan += (Math.max(0.015, desiredSpanY) - calibData.downSpan) * 0.25;
-        }
-      }
+    // 2. For corners, verify that gaze has shifted away from the previous point!
+    let shiftedToTarget = true;
+    if (s.id !== 'c' && prevRecordedX !== null) {
+      const distFromPrev = Math.hypot(smoothFeatX - prevRecordedX, smoothFeatY - prevRecordedY);
+      const dxFromCenter = smoothFeatX - recorded.c.fx;
+      const dyFromCenter = smoothFeatY - recorded.c.fy;
+      // Check if looking generally toward the target quadrant OR moved meaningfully from previous target
+      const rightWayX = (s.dirX * dxFromCenter) > 0.004;
+      const rightWayY = (s.dirY * dyFromCenter) > 0.003;
+      shiftedToTarget = (rightWayX && rightWayY) || (distFromPrev > 0.014 && (rightWayX || rightWayY));
     }
-
-    // Check if the blue fixation dot (#gazePointer) is actually on the character circle!
-    const distToTarget = Math.hypot(smoothGazeX - targetX, smoothGazeY - targetY);
-    const hitRadius = Math.max(78, Math.min(window.innerWidth, window.innerHeight) * 0.16);
-    const dotOnTarget = distToTarget <= hitRadius;
 
     const ringBar = document.getElementById('calibRingBar');
 
     if (autoMode) {
-      if (dotOnTarget && isSteady && elapsed > 400) {
-        target.classList.add('sampling');
-        bufX.push(latestFeatX);
-        bufY.push(latestFeatY);
+      if (elapsed > 650 && isSteady && shiftedToTarget) {
+        // Visually pull the blue fixation dot onto the character while sampling!
+        calibMagnetActive = true;
+        calibMagnetX = targetX;
+        calibMagnetY = targetY;
+
+        // Wait until the blue fixation dot visibly lands inside the character circle
+        const dotDist = Math.hypot(smoothGazeX - targetX, smoothGazeY - targetY);
+        if (dotDist <= 75) {
+          target.classList.add('sampling');
+          bufX.push(smoothFeatX);
+          bufY.push(smoothFeatY);
+        }
       } else {
+        calibMagnetActive = false;
         target.classList.remove('sampling');
-        // Decay samples if fixation dot drifts off the character
         if (bufX.length > 0) {
           bufX.pop();
           bufY.pop();
@@ -1070,10 +1151,12 @@ function startCalibration(autoMode = true) {
     }
   }, 33);
 
-  // Manual tap / Spacebar capture still works anytime
   const manualCapture = () => {
-    bufX.push(latestFeatX);
-    bufY.push(latestFeatY);
+    calibMagnetActive = true;
+    calibMagnetX = steps[stepIdx].pctX * window.innerWidth;
+    calibMagnetY = steps[stepIdx].pctY * window.innerHeight;
+    bufX.push(smoothFeatX);
+    bufY.push(smoothFeatY);
     commitCurrentStep();
   };
 
@@ -1086,15 +1169,16 @@ function resetDefaultCalibration() {
   clearCalibTimers();
   calibData = {
     calibrated: false,
-    centerX: latestFeatX || 0,
-    centerY: latestFeatY || 0,
-    leftSpan: 0.065,
-    rightSpan: 0.065,
-    upSpan: 0.048,
-    downSpan: 0.048,
+    centerX: smoothFeatX || 0,
+    centerY: smoothFeatY || 0,
+    leftSpan: 0.055,
+    rightSpan: 0.055,
+    upSpan: 0.042,
+    downSpan: 0.042,
+    matrix: null,
     pts: null
   };
-  localStorage.removeItem('vb_gaze_calib_v3');
+  localStorage.removeItem('vb_gaze_calib_v4');
   finishCalibration();
 }
 
