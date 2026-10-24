@@ -15,10 +15,10 @@
       --yellow: #eab308;
       --red: #ef4444;
       --purple: #a855f7;
-      --tile-min: 155px;
-      --tile-height: 145px;
-      --tile-emoji: 3.2rem;
-      --tile-font: 1.25rem;
+      --tile-min: 160px;
+      --tile-height: 150px;
+      --tile-emoji: 3.4rem;
+      --tile-font: 1.3rem;
     }
     * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
     body {
@@ -27,10 +27,10 @@
       display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
     }
 
-    /* Native Bottom-Right Camera Preview Box */
+    /* Bottom-Right Camera Preview Box */
     #camPreviewBox {
       position: fixed; bottom: 12px; right: 12px;
-      width: 86px; height: 114px; border-radius: 12px;
+      width: 90px; height: 116px; border-radius: 12px;
       overflow: hidden; border: 3px solid var(--yellow);
       background: #000; z-index: 900; pointer-events: none;
       display: none; box-shadow: 0 4px 14px rgba(0,0,0,0.65);
@@ -42,10 +42,10 @@
     }
     #camVideo {
       width: 100%; height: 100%; object-fit: cover;
-      transform: scaleX(-1); /* Mirror like a natural front camera */
+      transform: scaleX(-1);
     }
     #camStatusDot {
-      position: absolute; top: 5px; left: 5px;
+      position: absolute; top: 6px; left: 6px;
       width: 10px; height: 10px; border-radius: 50%;
       background: var(--yellow); box-shadow: 0 0 6px #000;
     }
@@ -54,9 +54,9 @@
     /* Gaze Reticle (Floating Eye Pointer) */
     #gazePointer {
       position: fixed; top: 50%; left: 50%;
-      width: 36px; height: 36px; border-radius: 50%;
+      width: 38px; height: 38px; border-radius: 50%;
       border: 3px solid var(--accent); background: rgba(56, 189, 248, 0.28);
-      box-shadow: 0 0 14px var(--accent);
+      box-shadow: 0 0 16px var(--accent);
       transform: translate(-50%, -50%);
       pointer-events: none; z-index: 9999; display: none;
     }
@@ -72,40 +72,54 @@
       pointer-events: none; transition: width 0.05s linear;
     }
 
-    /* Top Sentence & Controls Bar */
+    /* Clean Top Control Bar */
     .top-bar {
       display: flex; flex-direction: column; gap: 8px;
-      padding: 10px 12px; background: var(--panel);
+      padding: 8px 12px; background: var(--panel);
       border-bottom: 2px solid #334155; z-index: 20;
     }
-    .top-row-strip {
-      display: flex; align-items: center; gap: 8px; width: 100%;
+    .top-row-controls {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; overflow-x: auto; width: 100%;
+    }
+    .control-group {
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    /* Toggleable Sentence Strip Row (Hidden by default) */
+    .sentence-row {
+      display: none; align-items: center; gap: 8px; width: 100%;
+      padding-top: 4px;
+    }
+    body.show-sentence .sentence-row {
+      display: flex;
     }
     .sentence-strip {
       flex: 1; display: flex; align-items: center; gap: 8px;
       background: #090d16; border: 2px solid #334155; border-radius: 10px;
-      padding: 6px 10px; min-height: 52px; overflow-x: auto;
+      padding: 6px 10px; min-height: 50px; overflow-x: auto;
     }
     .strip-chip {
       display: flex; align-items: center; gap: 6px;
       background: var(--panel); padding: 6px 10px; border-radius: 8px;
-      font-size: 1.05rem; font-weight: 700; white-space: nowrap;
+      font-size: 1rem; font-weight: 700; white-space: nowrap;
       border: 2px solid var(--accent);
     }
-    .top-row-controls {
-      display: flex; align-items: center; gap: 8px; overflow-x: auto; width: 100%;
-    }
+
     .action-btn {
-      height: 46px; padding: 0 14px; border-radius: 10px; border: none;
-      font-size: 0.95rem; font-weight: 700; cursor: pointer;
+      height: 42px; padding: 0 12px; border-radius: 10px; border: none;
+      font-size: 0.9rem; font-weight: 700; cursor: pointer;
       display: flex; align-items: center; justify-content: center; gap: 6px;
       color: #fff; white-space: nowrap; flex-shrink: 0;
+      background: #475569;
     }
-    .btn-speak { background: var(--green); }
-    .btn-clear { background: var(--red); }
+    .btn-speak { background: var(--green); height: 50px; padding: 0 16px; font-size: 1rem; }
+    .btn-clear { background: var(--red); height: 50px; padding: 0 14px; font-size: 1rem; }
     .btn-gaze { background: #0284c7; }
     .btn-gaze.active { background: var(--purple); box-shadow: 0 0 10px var(--purple); }
-    .btn-lock { background: #475569; }
+    .btn-center { background: #0ea5e9; display: none; }
+    body.gaze-active .btn-center { display: flex; }
+    .btn-sentence.active { background: var(--accent); color: #0f172a; }
     .btn-lock.unlocked { background: var(--yellow); color: #000; }
 
     /* Context Category Tabs */
@@ -143,20 +157,23 @@
     .board-grid {
       flex: 1; display: grid;
       grid-template-columns: repeat(auto-fill, minmax(var(--tile-min), 1fr));
-      grid-auto-rows: max-content; gap: 12px; padding: 12px; overflow-y: auto;
+      grid-auto-rows: max-content; gap: 14px; padding: 14px; overflow-y: auto;
     }
     .tile {
-      background: var(--panel); border-radius: 16px;
+      background: var(--panel); border-radius: 18px;
       border: 4px solid var(--accent);
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      padding: 12px 8px; cursor: pointer; position: relative;
-      transition: transform 0.08s ease, background 0.15s;
+      padding: 14px 10px; cursor: pointer; position: relative;
+      transition: transform 0.08s ease, background 0.15s, box-shadow 0.15s;
       min-height: var(--tile-height); text-align: center;
     }
-    .tile:active, .tile.dwell-triggered { transform: scale(0.95); background: #334155; }
+    .tile:active, .tile.dwell-triggered {
+      transform: scale(0.95); background: #334155;
+      box-shadow: 0 0 20px var(--accent);
+    }
     .tile-visual {
       font-size: var(--tile-emoji); line-height: 1; margin-bottom: 8px;
-      max-height: 80px; object-fit: contain; border-radius: 8px; pointer-events: none;
+      max-height: 85px; object-fit: contain; border-radius: 8px; pointer-events: none;
     }
     .tile-label {
       font-size: var(--tile-font); font-weight: 800; line-height: 1.15; pointer-events: none;
@@ -176,12 +193,6 @@
       display: none; color: #94a3b8;
     }
     body.edit-mode .add-tile-card { display: flex; }
-
-    @media (min-width: 768px) {
-      .top-bar { flex-direction: row; align-items: center; }
-      .top-row-controls { width: auto; }
-      .action-btn { height: 54px; font-size: 1.05rem; }
-    }
 
     /* Modals */
     .modal-backdrop {
@@ -214,26 +225,55 @@
     @keyframes pulse { 50% { opacity: 0.6; } }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 
-    /* 5-Point Calibration Overlay */
+    /* Bluey Character Fixation Calibration Screen */
     #calibrationOverlay {
-      position: fixed; inset: 0; background: rgba(15, 23, 42, 0.94);
+      position: fixed; inset: 0; background: rgba(10, 15, 29, 0.96);
       display: none; z-index: 5000; flex-direction: column;
-      align-items: center; justify-content: center; padding: 24px; text-align: center;
+      align-items: center; justify-content: center; padding: 20px; text-align: center;
     }
     #calibrationOverlay.open { display: flex; }
     #calibStatusBanner {
       background: #1e293b; border: 2px solid var(--accent);
-      padding: 10px 16px; border-radius: 10px; font-weight: 700;
-      margin-bottom: 12px; color: #fff; max-width: 360px;
+      padding: 10px 18px; border-radius: 12px; font-weight: 700;
+      margin-bottom: 8px; color: #fff; max-width: 420px; font-size: 1rem;
     }
-    .calib-point {
-      position: fixed; width: 58px; height: 58px; border-radius: 50%;
-      background: var(--yellow); border: 4px solid #fff;
-      cursor: pointer; display: flex; align-items: center; justify-content: center;
-      font-weight: 900; color: #000; font-size: 1.05rem;
-      box-shadow: 0 0 20px var(--yellow); z-index: 5010;
+    .calib-single-target {
+      position: fixed; width: 108px; height: 108px; border-radius: 50%;
+      background: radial-gradient(circle, #e0f2fe 0%, #38bdf8 75%, #0284c7 100%);
+      border: 4px solid #fff; cursor: pointer;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      box-shadow: 0 0 34px var(--accent);
+      transform: translate(-50%, -50%); z-index: 5010;
+      animation: targetBounce 1.1s infinite ease-in-out;
+      transition: left 0.35s ease, top 0.35s ease;
+      padding: 6px;
     }
-    .calib-point.done { background: var(--green); box-shadow: 0 0 20px var(--green); color: #fff; }
+    .calib-single-target.sampling {
+      background: radial-gradient(circle, #dcfce7 0%, #22c55e 75%, #15803d 100%) !important;
+      box-shadow: 0 0 44px var(--green) !important;
+      animation: none; transform: translate(-50%, -50%) scale(1.14);
+    }
+    .calib-char-wrap {
+      width: 72px; height: 72px; display: flex; align-items: center; justify-content: center;
+      pointer-events: none;
+    }
+    .calib-ring-pct {
+      font-size: 0.78rem; font-weight: 900; color: #0f172a;
+      background: rgba(255,255,255,0.95); padding: 2px 8px; border-radius: 10px;
+      margin-top: -4px; box-shadow: 0 2px 4px rgba(0,0,0,0.35);
+      pointer-events: none;
+    }
+    #bottomCaptureBtn {
+      position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+      height: 54px; padding: 0 28px; border-radius: 14px;
+      background: var(--green); color: #fff; font-size: 1.1rem; font-weight: 800;
+      border: 3px solid #fff; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+      z-index: 5020; cursor: pointer;
+    }
+    @keyframes targetBounce {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50% { transform: translate(-50%, -50%) scale(1.15); }
+    }
   </style>
 </head>
 <body>
@@ -241,24 +281,32 @@
   <!-- Floating Gaze Reticle -->
   <div id="gazePointer"></div>
 
-  <!-- Clean Bottom-Right Camera Preview -->
+  <!-- Bottom-Right Camera Preview -->
   <div id="camPreviewBox">
     <video id="camVideo" autoplay playsinline muted></video>
     <div id="camStatusDot"></div>
   </div>
 
-  <!-- Top Sentence & Controls Bar -->
+  <!-- Sleek Top Bar -->
   <div class="top-bar">
-    <div class="top-row-strip">
-      <div id="sentenceStrip" class="sentence-strip"></div>
-      <button class="action-btn btn-speak dwell-target" onclick="speakStrip()">🔊 Speak</button>
-      <button class="action-btn btn-clear dwell-target" onclick="clearStrip()">✖</button>
-    </div>
     <div class="top-row-controls">
-      <button id="gazeBtn" class="action-btn btn-gaze" onclick="openGazeModal()">👁️ Gaze: OFF</button>
-      <button class="action-btn btn-lock" onclick="cycleTileSize()">📐 Size</button>
-      <button id="lockBtn" class="action-btn btn-lock" onclick="toggleEditMode()">🔒 Locked</button>
-      <button id="syncBtn" class="action-btn btn-lock" style="display:none;" onclick="openSyncModal()">💾 Backup</button>
+      <div class="control-group">
+        <button id="gazeBtn" class="action-btn btn-gaze" onclick="openGazeModal()">👁️ Gaze: OFF</button>
+        <button id="centerBtn" class="action-btn btn-center" onclick="quickCenterGaze()" title="Shortcut: Spacebar">🎯 Center</button>
+        <button id="sentenceToggleBtn" class="action-btn btn-sentence" onclick="toggleSentenceBar()">💬 Sentence: OFF</button>
+      </div>
+      <div class="control-group">
+        <button class="action-btn" onclick="cycleTileSize()">📐 Size</button>
+        <button id="syncBtn" class="action-btn" style="display:none;" onclick="openSyncModal()">💾 Backup</button>
+        <button id="lockBtn" class="action-btn btn-lock" onclick="toggleEditMode()">🔒 Locked</button>
+      </div>
+    </div>
+
+    <!-- Collapsible Sentence Strip (Only visible when 💬 Sentence: ON) -->
+    <div id="sentenceRow" class="sentence-row">
+      <div id="sentenceStrip" class="sentence-strip"></div>
+      <button class="action-btn btn-speak dwell-target" onclick="speakStrip()">🔊 Speak All</button>
+      <button class="action-btn btn-clear dwell-target" onclick="clearStrip()">✖ Clear</button>
     </div>
   </div>
 
@@ -311,8 +359,8 @@
         <span id="recStatus" style="font-size:0.85rem; color:#94a3b8;">Using Default TTS Voice</span>
       </div>
       <div class="modal-actions">
-        <button class="action-btn btn-lock" onclick="closeTileModal()">Cancel</button>
-        <button class="action-btn btn-speak" onclick="saveNewTile()">Save Tile</button>
+        <button class="action-btn" onclick="closeTileModal()">Cancel</button>
+        <button class="action-btn btn-speak" style="height:42px;" onclick="saveNewTile()">Save Tile</button>
       </div>
     </div>
   </div>
@@ -320,13 +368,22 @@
   <!-- Eye Tracking & Dwell Settings Modal -->
   <div id="gazeModal" class="modal-backdrop">
     <div class="modal">
-      <h2>👁️ Eye Gaze & Dwell Settings</h2>
+      <h2>👁️ Mobile & PC Eye Gaze Setup</h2>
       <div class="field">
         <label>Tracking Input Mode</label>
         <select id="gazeModeSelect">
           <option value="off">OFF (Standard Touch / Click Only)</option>
-          <option value="webcam">Front Camera AI Eye & Head Tracker (MediaPipe)</option>
-          <option value="cursor">Touch-Drag / External Mouse Cursor Dwell</option>
+          <option value="webcam">Camera AI: Blended Eye + Head (Best for Phone & Elgato)</option>
+          <option value="head">Camera AI: Steady Head-Pointing (Tremor-Proof)</option>
+          <option value="cursor">External Eye Tracker / Cursor (Beam Eye Tracker / Mouse)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Magnetic Tile Snap (Helps lock onto tiles on phones)</label>
+        <select id="snapSelect">
+          <option value="medium">Medium Gravity (Recommended for Mobile)</option>
+          <option value="strong">Strong Gravity (Best for High Tremor)</option>
+          <option value="off">Off (Raw Unassisted Cursor)</option>
         </select>
       </div>
       <div class="field">
@@ -337,40 +394,47 @@
         </select>
       </div>
       <div class="field">
-        <label>Dwell Hold Time: <span id="dwellTimeVal">1.2</span> seconds</label>
-        <input type="range" id="dwellTimeSlider" min="500" max="2500" step="100" value="1200"
+        <label>Dwell Hold Time: <span id="dwellTimeVal">1.1</span> seconds</label>
+        <input type="range" id="dwellTimeSlider" min="400" max="2500" step="100" value="1100"
                oninput="document.getElementById('dwellTimeVal').textContent = (this.value/1000).toFixed(1)" />
       </div>
       <div class="field">
-        <label>Gaze Sensitivity / Speed: <span id="sensVal">5</span></label>
-        <input type="range" id="sensSlider" min="1" max="10" step="1" value="5"
+        <label>Gaze Reach / Sensitivity: <span id="sensVal">6</span></label>
+        <input type="range" id="sensSlider" min="1" max="12" step="1" value="6"
                oninput="document.getElementById('sensVal').textContent = this.value" />
       </div>
       <div class="field">
-        <label>Tremor Smoothing (Higher = steadier gaze dot)</label>
-        <input type="range" id="smoothingSlider" min="1" max="9" step="1" value="6" />
+        <label>Tremor Smoothing: <span id="smoothVal">6</span></label>
+        <input type="range" id="smoothingSlider" min="1" max="9" step="1" value="6"
+               oninput="document.getElementById('smoothVal').textContent = this.value" />
       </div>
-      <button class="action-btn btn-gaze" style="justify-content:center; width:100%;" onclick="startCalibration()">
-        🎯 Calibrate Camera (5 Quick Taps)
-      </button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="action-btn btn-gaze" style="flex:1; height:46px;" onclick="startCalibration(true)">
+          🐾 Bluey Hands-Free Calibrate (Phone)
+        </button>
+        <button class="action-btn" style="flex:1; height:46px; background:#0284c7;" onclick="startCalibration(false)">
+          🐾 Bluey Manual Calibrate (PC)
+        </button>
+      </div>
       <div class="modal-actions">
-        <button class="action-btn btn-lock" onclick="closeGazeModal()">Close</button>
-        <button class="action-btn btn-speak" onclick="applyGazeSettings()">Apply & Activate</button>
+        <button class="action-btn" onclick="closeGazeModal()">Close</button>
+        <button class="action-btn btn-speak" style="height:42px;" onclick="applyGazeSettings()">Apply & Activate</button>
       </div>
     </div>
   </div>
 
-  <!-- 5-Point Calibration Screen -->
+  <!-- Bluey Character Fixation Calibration Screen -->
   <div id="calibrationOverlay">
-    <div id="calibStatusBanner">⏳ Starting AI Eye Tracker...</div>
-    <p style="color:#cbd5e1; margin:0 0 14px 0; font-size:0.95rem; max-width:320px;">
-      Look directly at each yellow circle (tilt your eyes/head naturally toward it) and <b>tap it once</b>.
+    <div id="calibStatusBanner">⏳ Starting Camera...</div>
+    <p id="calibSubText" style="color:#cbd5e1; margin:0 0 12px 0; font-size:0.9rem; max-width:360px;">
+      Find Bluey and her family with your eyes!
     </p>
     <div style="display:flex; gap:10px;">
-      <button class="action-btn btn-lock" onclick="resetDefaultCalibration()">Reset Default</button>
-      <button class="action-btn btn-clear" onclick="finishCalibration()">Close</button>
+      <button class="action-btn" onclick="resetDefaultCalibration()">Reset Default</button>
+      <button class="action-btn" style="background:var(--red);" onclick="finishCalibration()">Exit</button>
     </div>
-    <div id="calibPointsContainer"></div>
+    <div id="calibTargetContainer"></div>
+    <button id="bottomCaptureBtn" style="display:none;">🐾 Tap Here (or Spacebar) When Looking!</button>
   </div>
 
   <!-- Backup / Multi-Device Sync Modal -->
@@ -386,7 +450,7 @@
         <input type="file" accept=".json" onchange="importBoardData(event)" />
       </div>
       <div class="modal-actions">
-        <button class="action-btn btn-lock" onclick="closeSyncModal()">Close</button>
+        <button class="action-btn" onclick="closeSyncModal()">Close</button>
       </div>
     </div>
   </div>

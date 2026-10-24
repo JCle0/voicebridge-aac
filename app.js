@@ -31,11 +31,12 @@ let tiles = [];
 let currentCategory = 'Core Needs';
 let stripItems = [];
 let editMode = false;
+let showSentenceBar = localStorage.getItem('vb_show_sentence') === 'true';
 
 const SIZE_PRESETS = [
-  { name: 'Standard', min: '155px', height: '140px', emoji: '3.1rem', font: '1.2rem' },
-  { name: 'Compact',  min: '115px', height: '110px', emoji: '2.4rem', font: '1.0rem' },
-  { name: 'Large',    min: '240px', height: '185px', emoji: '4.2rem', font: '1.5rem' }
+  { name: 'Standard', min: '160px', height: '148px', emoji: '3.3rem', font: '1.25rem' },
+  { name: 'Large',    min: '240px', height: '190px', emoji: '4.3rem', font: '1.55rem' },
+  { name: 'Compact',  min: '120px', height: '115px', emoji: '2.4rem', font: '1.0rem' }
 ];
 let currentSizeIdx = 0;
 
@@ -46,10 +47,11 @@ let mediaRecorder = null;
 let audioChunks = [];
 
 // Eye Tracking & MediaPipe State
-let gazeMode = 'off';
-let dwellThresholdMs = 1200;
-let smoothingFactor = 0.2;
-let gazeSensitivity = 5;
+let gazeMode = 'off'; // 'off' | 'webcam' | 'head' | 'cursor'
+let snapStrength = 'medium'; // 'off' | 'medium' | 'strong'
+let dwellThresholdMs = 1100;
+let smoothingFactor = 0.18;
+let gazeSensitivity = 6;
 let rawGazeX = window.innerWidth / 2;
 let rawGazeY = window.innerHeight / 2;
 let smoothGazeX = rawGazeX;
@@ -60,7 +62,7 @@ let lastFrameTime = performance.now();
 let cooldownEl = null;
 let cooldownUntil = 0;
 
-// MediaPipe FaceLandmarker instance & live feature vector
+// MediaPipe FaceLandmarker instance & roll-compensated feature vector
 let faceLandmarker = null;
 let mpLoading = false;
 let camStream = null;
@@ -68,21 +70,123 @@ let lastVideoTime = -1;
 let latestFeatX = 0;
 let latestFeatY = 0;
 let faceDetected = false;
+let activeCalibTrigger = null;
+let calibTimers = [];
 
-// Calibration Mapping State (maps raw feature X/Y to 0..1 screen percentages)
+// 5-Point Bilinear Calibration Model
 let calibData = {
   calibrated: false,
   centerX: 0,
   centerY: 0,
-  spanX: 0.16,
-  spanY: 0.12
+  leftSpan: 0.075,
+  rightSpan: 0.075,
+  upSpan: 0.055,
+  downSpan: 0.055,
+  pts: null
 };
 
-// Load saved calibration if present
 try {
-  const savedCalib = localStorage.getItem('vb_gaze_calib');
+  const savedCalib = localStorage.getItem('vb_gaze_calib_v3');
   if (savedCalib) calibData = JSON.parse(savedCalib);
 } catch (e) {}
+
+// Built-in Vector Illustrations for Bluey, Bingo, Bandit, Chilli & Muffin
+function getBlueyCharacterSVG(charKey) {
+  const configs = {
+    bluey: {
+      base: '#7ec8f8', patch: '#365899', muzzle: '#e8c382', brow: '#b6e3ff',
+      innerEar: '#d4a373', mask: 'left', stubble: false
+    },
+    bingo: {
+      base: '#f6a055', patch: '#b34e24', muzzle: '#fde6be', brow: '#ffd1a3',
+      innerEar: '#f3c69f', mask: 'right', stubble: false
+    },
+    bandit: {
+      base: '#7ec8f8', patch: '#253659', muzzle: '#e8c382', brow: '#b6e3ff',
+      innerEar: '#d4a373', mask: 'both', stubble: true
+    },
+    chilli: {
+      base: '#e57c3c', patch: '#9e3f19', muzzle: '#fde6be', brow: '#f9b98c',
+      innerEar: '#eab892', mask: 'right', stubble: false
+    },
+    muffin: {
+      base: '#e2e8f0', patch: '#475569', muzzle: '#ffffff', brow: '#cbd5e1',
+      innerEar: '#f4a2b8', mask: 'both', stubble: false
+    }
+  };
+
+  const c = configs[charKey] || configs.bluey;
+
+  let patchesSVG = '';
+  if (c.mask === 'left') {
+    patchesSVG = `<ellipse cx="34" cy="46" rx="15" ry="18" fill="${c.patch}" />`;
+  } else if (c.mask === 'right') {
+    patchesSVG = `<ellipse cx="66" cy="46" rx="15" ry="18" fill="${c.patch}" />`;
+  } else {
+    patchesSVG = `
+      <ellipse cx="35" cy="46" rx="16" ry="19" fill="${c.patch}" />
+      <ellipse cx="65" cy="46" rx="16" ry="19" fill="${c.patch}" />
+      <rect x="30" y="28" width="40" height="22" rx="8" fill="${c.patch}" />
+    `;
+  }
+
+  const stubbleSVG = c.stubble
+    ? `<circle cx="34" cy="76" r="1.4" fill="#475569"/><circle cx="42" cy="80" r="1.4" fill="#475569"/><circle cx="58" cy="80" r="1.4" fill="#475569"/><circle cx="66" cy="76" r="1.4" fill="#475569"/>`
+    : '';
+
+  return `
+    <svg viewBox="0 0 100 100" width="70" height="70" xmlns="http://www.w3.org/2000/svg">
+      <!-- Pointy Heeler Ears -->
+      <polygon points="16,34 8,6 38,22" fill="${c.patch}" stroke="#0f172a" stroke-width="2.5" stroke-linejoin="round"/>
+      <polygon points="18,30 13,12 33,23" fill="${c.innerEar}"/>
+      <polygon points="84,34 92,6 62,22" fill="${c.base}" stroke="#0f172a" stroke-width="2.5" stroke-linejoin="round"/>
+      <polygon points="82,30 87,12 67,23" fill="${c.innerEar}"/>
+      <!-- Main Head -->
+      <rect x="18" y="20" width="64" height="68" rx="26" fill="${c.base}" stroke="#0f172a" stroke-width="2.5"/>
+      <!-- Eye Patches -->
+      ${patchesSVG}
+      <!-- Floating Heeler Eyebrows -->
+      <rect x="25" y="24" width="14" height="6" rx="3" transform="rotate(-10 32 27)" fill="${c.brow}" stroke="#0f172a" stroke-width="1.5"/>
+      <rect x="61" y="24" width="14" height="6" rx="3" transform="rotate(10 68 27)" fill="${c.brow}" stroke="#0f172a" stroke-width="1.5"/>
+      <!-- Big Expressive Eyes -->
+      <ellipse cx="35" cy="46" rx="8.5" ry="10.5" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
+      <ellipse cx="65" cy="46" rx="8.5" ry="10.5" fill="#ffffff" stroke="#0f172a" stroke-width="2"/>
+      <circle cx="37" cy="46" r="4.5" fill="#0f172a"/>
+      <circle cx="63" cy="46" r="4.5" fill="#0f172a"/>
+      <circle cx="38.5" cy="44" r="1.6" fill="#ffffff"/>
+      <circle cx="64.5" cy="44" r="1.6" fill="#ffffff"/>
+      <!-- Tan/Cream Muzzle & Smile -->
+      <ellipse cx="50" cy="69" rx="24" ry="17" fill="${c.muzzle}" stroke="#0f172a" stroke-width="2"/>
+      <ellipse cx="50" cy="61" rx="8" ry="5.5" fill="#0f172a"/>
+      <ellipse cx="48" cy="59.5" rx="2.5" ry="1.2" fill="#ffffff" opacity="0.65"/>
+      <path d="M 39 71 Q 50 80 61 71" fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round"/>
+      ${stubbleSVG}
+    </svg>
+  `;
+}
+
+function playChime(freq = 660) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.14, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.22);
+  } catch (e) {}
+}
+
+function playBlueyFanfare() {
+  const notes = [523.25, 587.33, 659.25, 783.99];
+  notes.forEach((n, idx) => {
+    setTimeout(() => playChime(n), idx * 90);
+  });
+}
 
 // 1. Database Setup
 function initDB() {
@@ -185,6 +289,21 @@ function deleteTileFromDB(id) {
     tx.objectStore('tiles').delete(id);
     tx.oncomplete = () => resolve();
   });
+}
+
+function applySentenceBarState() {
+  document.body.classList.toggle('show-sentence', showSentenceBar);
+  const btn = document.getElementById('sentenceToggleBtn');
+  if (btn) {
+    btn.textContent = showSentenceBar ? '💬 Sentence: ON' : '💬 Sentence: OFF';
+    btn.classList.toggle('active', showSentenceBar);
+  }
+}
+
+function toggleSentenceBar() {
+  showSentenceBar = !showSentenceBar;
+  localStorage.setItem('vb_show_sentence', showSentenceBar);
+  applySentenceBarState();
 }
 
 function cycleTileSize() {
@@ -357,11 +476,13 @@ function playTileAudio(tile) {
 function handleTileTap(tile, cardEl) {
   if (cardEl) {
     cardEl.classList.add('dwell-triggered');
-    setTimeout(() => cardEl.classList.remove('dwell-triggered'), 220);
+    setTimeout(() => cardEl.classList.remove('dwell-triggered'), 240);
   }
   playTileAudio(tile);
-  stripItems.push(tile);
-  renderStrip();
+  if (showSentenceBar) {
+    stripItems.push(tile);
+    renderStrip();
+  }
 }
 
 function renderStrip() {
@@ -388,7 +509,7 @@ function clearStrip() {
   renderStrip();
 }
 
-// 4. MediaPipe 3D Iris & Eye-Gaze Engine
+// 4. Roll-Compensated Mobile & Desktop Eye-Gaze Engine
 function openGazeModal() {
   document.getElementById('gazeModal').classList.add('open');
 }
@@ -398,11 +519,12 @@ function closeGazeModal() {
 
 async function applyGazeSettings() {
   gazeMode = document.getElementById('gazeModeSelect').value;
+  snapStrength = document.getElementById('snapSelect').value;
   const camPreview = document.getElementById('camPreviewSelect').value;
   dwellThresholdMs = parseInt(document.getElementById('dwellTimeSlider').value, 10);
   gazeSensitivity = parseInt(document.getElementById('sensSlider').value, 10);
   const smoothSlider = parseInt(document.getElementById('smoothingSlider').value, 10);
-  smoothingFactor = (10 - smoothSlider) * 0.045;
+  smoothingFactor = (10 - smoothSlider) * 0.038;
 
   document.body.classList.toggle('hide-cam-preview', camPreview === 'hidden');
   const gazeBtn = document.getElementById('gazeBtn');
@@ -419,18 +541,54 @@ async function applyGazeSettings() {
     resetAllDwellVisuals();
   } else if (gazeMode === 'cursor') {
     document.body.classList.add('gaze-active');
-    gazeBtn.textContent = '👁️ Gaze: Touch/Cursor';
+    gazeBtn.textContent = '👁️ Gaze: Cursor';
     gazeBtn.classList.add('active');
     camBox.classList.remove('active');
     stopCameraStream();
-  } else if (gazeMode === 'webcam') {
+  } else if (gazeMode === 'webcam' || gazeMode === 'head') {
     document.body.classList.add('gaze-active');
-    gazeBtn.textContent = '👁️ Gaze: Cam';
+    gazeBtn.textContent = gazeMode === 'head' ? '👁️ Gaze: Head' : '👁️ Gaze: Cam';
     gazeBtn.classList.add('active');
     camBox.classList.add('active');
     await initMediaPipeCamera();
   }
 }
+
+function quickCenterGaze() {
+  if (gazeMode === 'webcam' || gazeMode === 'head') {
+    const shiftX = latestFeatX - calibData.centerX;
+    const shiftY = latestFeatY - calibData.centerY;
+    calibData.centerX = latestFeatX;
+    calibData.centerY = latestFeatY;
+    if (calibData.pts) {
+      Object.keys(calibData.pts).forEach(k => {
+        calibData.pts[k].fx += shiftX;
+        calibData.pts[k].fy += shiftY;
+      });
+    }
+    try {
+      localStorage.setItem('vb_gaze_calib_v3', JSON.stringify(calibData));
+    } catch (e) {}
+  }
+  rawGazeX = window.innerWidth / 2;
+  rawGazeY = window.innerHeight / 2;
+  smoothGazeX = rawGazeX;
+  smoothGazeY = rawGazeY;
+  playChime(520);
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && document.activeElement.tagName !== 'INPUT') {
+    const calibOpen = document.getElementById('calibrationOverlay').classList.contains('open');
+    if (calibOpen && typeof activeCalibTrigger === 'function') {
+      e.preventDefault();
+      activeCalibTrigger();
+    } else if (gazeMode !== 'off') {
+      e.preventDefault();
+      quickCenterGaze();
+    }
+  }
+});
 
 function stopCameraStream() {
   if (camStream) {
@@ -442,10 +600,9 @@ function stopCameraStream() {
 async function initMediaPipeCamera() {
   const banner = document.getElementById('calibStatusBanner');
   try {
-    // 1. Start Front Camera Feed immediately
     if (!camStream) {
       camStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 640 } },
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60 } },
         audio: false
       });
       const videoEl = document.getElementById('camVideo');
@@ -453,10 +610,9 @@ async function initMediaPipeCamera() {
       await videoEl.play();
     }
 
-    // 2. Load Google MediaPipe FaceLandmarker if not already loaded
     if (!faceLandmarker && !mpLoading) {
       mpLoading = true;
-      if (banner) banner.textContent = '⏳ Loading Google MediaPipe Iris AI...';
+      if (banner) banner.textContent = '⏳ Loading Google MediaPipe 3D Gaze AI...';
 
       const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3');
       const { FaceLandmarker, FilesetResolver } = vision;
@@ -464,26 +620,22 @@ async function initMediaPipeCamera() {
         'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm'
       );
 
+      const opts = {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+          delegate: 'GPU'
+        },
+        outputFaceBlendshapes: true,
+        outputFacialTransformationMatrixes: true,
+        runningMode: 'VIDEO',
+        numFaces: 1
+      };
+
       try {
-        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-          baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-            delegate: 'GPU'
-          },
-          outputFaceBlendshapes: true,
-          runningMode: 'VIDEO',
-          numFaces: 1
-        });
+        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, opts);
       } catch (gpuErr) {
-        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
-          baseOptions: {
-            modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-            delegate: 'CPU'
-          },
-          outputFaceBlendshapes: true,
-          runningMode: 'VIDEO',
-          numFaces: 1
-        });
+        opts.baseOptions.delegate = 'CPU';
+        faceLandmarker = await FaceLandmarker.createFromOptions(filesetResolver, opts);
       }
       mpLoading = false;
     }
@@ -493,9 +645,15 @@ async function initMediaPipeCamera() {
   }
 }
 
-// Extract Combined Eye-Gaze + Iris + Head Pose Feature Vector from MediaPipe
+function rotateDeRoll(x, y, cosR, sinR) {
+  return {
+    x: x * cosR - y * sinR,
+    y: x * sinR + y * cosR
+  };
+}
+
 function processVideoFrame() {
-  if (gazeMode !== 'webcam' || !faceLandmarker || !camStream) return;
+  if ((gazeMode !== 'webcam' && gazeMode !== 'head') || !faceLandmarker || !camStream) return;
 
   const videoEl = document.getElementById('camVideo');
   if (videoEl.readyState < 2) return;
@@ -506,32 +664,65 @@ function processVideoFrame() {
 
   const results = faceLandmarker.detectForVideo(videoEl, nowMs);
   const camBox = document.getElementById('camPreviewBox');
-  const banner = document.getElementById('calibStatusBanner');
 
   if (results.faceLandmarks && results.faceLandmarks.length > 0) {
     const L = results.faceLandmarks[0];
     faceDetected = true;
     camBox.classList.add('tracking-ok');
-    if (banner && banner.textContent.includes('⏳')) {
-      banner.textContent = '🟢 Eyes Locked! Look at each yellow circle & tap it';
+
+    // 1. Compute Roll Angle between outer eye corners (33 and 263) to cancel phone/head tilt
+    const dxEye = L[263].x - L[33].x;
+    const dyEye = L[263].y - L[33].y;
+    const rollAngle = Math.atan2(dyEye, dxEye);
+    const cosR = Math.cos(-rollAngle);
+    const sinR = Math.sin(-rollAngle);
+    const faceScale = Math.hypot(dxEye, dyEye) || 0.15;
+
+    const origin = L[168];
+    const rel = (idx) => rotateDeRoll(
+      (L[idx].x - origin.x) / faceScale,
+      (L[idx].y - origin.y) / faceScale,
+      cosR,
+      sinR
+    );
+
+    const noseTip = rel(1);
+    const leftOuter = rel(33);
+    const leftInner = rel(133);
+    const leftTop = rel(159);
+    const leftBot = rel(145);
+    const leftIris = rel(468);
+
+    const rightInner = rel(362);
+    const rightOuter = rel(263);
+    const rightTop = rel(386);
+    const rightBot = rel(374);
+    const rightIris = rel(473);
+
+    // 2. 3D Head Yaw & Pitch
+    let headYaw = -noseTip.x;
+    let headPitch = noseTip.y - 0.34;
+
+    if (results.facialTransformationMatrixes && results.facialTransformationMatrixes.length > 0) {
+      const m = results.facialTransformationMatrixes[0].data;
+      if (m && m.length >= 16) {
+        const matYaw = -Math.atan2(m[8], m[10]);
+        const matPitch = Math.atan2(m[9], m[10]);
+        headYaw = (headYaw * 0.45) + (matYaw * 0.55);
+        headPitch = (headPitch * 0.45) + (matPitch * 0.55);
+      }
     }
 
-    // 1. Horizontal Iris Position inside Eye Sockets (Landmarks 468 & 473)
-    const minEx1 = Math.min(L[33].x, L[133].x);
-    const maxEx1 = Math.max(L[33].x, L[133].x);
-    const irisX1 = 0.5 - (L[468].x - minEx1) / Math.max(0.001, maxEx1 - minEx1);
+    // 3. Roll-Compensated Iris Position inside Eye Sockets
+    const lIrisRatioX = 0.5 - (leftIris.x - leftOuter.x) / Math.max(0.01, leftInner.x - leftOuter.x);
+    const rIrisRatioX = 0.5 - (rightIris.x - rightInner.x) / Math.max(0.01, rightOuter.x - rightInner.x);
+    const irisX = (lIrisRatioX + rIrisRatioX) * 0.5;
 
-    const minEx2 = Math.min(L[362].x, L[263].x);
-    const maxEx2 = Math.max(L[362].x, L[263].x);
-    const irisX2 = 0.5 - (L[473].x - minEx2) / Math.max(0.001, maxEx2 - minEx2);
-    const irisDX = (irisX1 + irisX2) * 0.5;
+    const lIrisRatioY = (leftIris.y - leftTop.y) / Math.max(0.01, leftBot.y - leftTop.y) - 0.5;
+    const rIrisRatioY = (rightIris.y - rightTop.y) / Math.max(0.01, rightBot.y - rightTop.y) - 0.5;
+    const irisY = (lIrisRatioY + rIrisRatioY) * 0.5;
 
-    // 2. Head Yaw & Frame Position (Mirrored so looking Right = positive)
-    const cheekMidX = (L[234].x + L[454].x) * 0.5;
-    const headYawX = cheekMidX - L[1].x;
-    const headPosX = 0.5 - L[1].x;
-
-    // 3. Vertical Eye Blendshapes + Head Pitch
+    // 4. Neural Eye-Gaze Blendshapes
     let lookUp = 0, lookDown = 0, lookLeft = 0, lookRight = 0;
     if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
       const cats = results.faceBlendshapes[0].categories;
@@ -545,32 +736,34 @@ function processVideoFrame() {
       }
     }
 
-    const cheekMidY = (L[234].y + L[454].y) * 0.5;
-    const headPitchY = (L[1].y - cheekMidY) - 0.04;
-    const headPosY = L[1].y - 0.5;
+    if (gazeMode === 'head') {
+      latestFeatX = headYaw * 1.45;
+      latestFeatY = headPitch * 1.45;
+    } else {
+      latestFeatX = (headYaw * 0.95) + (irisX * 0.95) + ((lookRight - lookLeft) * 0.65);
+      latestFeatY = (headPitch * 0.95) + (irisY * 0.45) + ((lookDown - lookUp) * 0.70);
+    }
 
-    // Combined Feature Coordinates (increases looking Right & Down)
-    latestFeatX = (irisDX * 1.6) + ((lookRight - lookLeft) * 0.35) + (headYawX * 1.5) + (headPosX * 0.55);
-    latestFeatY = ((lookDown - lookUp) * 0.45) + (headPitchY * 1.6) + (headPosY * 0.65);
+    // 5. 4-Quadrant Interpolation around Calibrated Center
+    const sensScale = 0.45 + (gazeSensitivity * 0.115);
+    const dx = latestFeatX - calibData.centerX;
+    const dy = latestFeatY - calibData.centerY;
 
-    // Map Feature Vector to Screen Pixels
-    const sensMultiplier = 0.5 + (gazeSensitivity * 0.12); // 0.62x .. 1.7x
-    const effectiveSpanX = Math.max(0.03, calibData.spanX / sensMultiplier);
-    const effectiveSpanY = Math.max(0.03, calibData.spanY / sensMultiplier);
+    const spanX = (dx >= 0 ? calibData.rightSpan : calibData.leftSpan) / sensScale;
+    const spanY = (dy >= 0 ? calibData.downSpan : calibData.upSpan) / sensScale;
 
-    const normX = 0.5 + (latestFeatX - calibData.centerX) / effectiveSpanX;
-    const normY = 0.5 + (latestFeatY - calibData.centerY) / effectiveSpanY;
+    const normX = 0.5 + (dx / Math.max(0.012, spanX)) * 0.40;
+    const normY = 0.5 + (dy / Math.max(0.012, spanY)) * 0.40;
 
-    rawGazeX = Math.max(10, Math.min(window.innerWidth - 10, normX * window.innerWidth));
-    rawGazeY = Math.max(10, Math.min(window.innerHeight - 10, normY * window.innerHeight));
+    rawGazeX = Math.max(12, Math.min(window.innerWidth - 12, normX * window.innerWidth));
+    rawGazeY = Math.max(12, Math.min(window.innerHeight - 12, normY * window.innerHeight));
   } else {
     faceDetected = false;
     camBox.classList.remove('tracking-ok');
-    if (banner) banner.textContent = '🟡 Center your face in the bottom-right camera box';
   }
 }
 
-// Mouse / Touch-Drag Dwell Support
+// External Tracker / Mouse / Touch-Drag Dwell Support
 window.addEventListener('mousemove', (e) => {
   if (gazeMode === 'cursor') {
     rawGazeX = e.clientX;
@@ -598,26 +791,49 @@ function resetAllDwellVisuals() {
   dwellProgressMs = 0;
 }
 
+function applyMagneticTileSnap(x, y) {
+  if (snapStrength === 'off') return { x, y };
+  const pull = snapStrength === 'strong' ? 0.38 : 0.22;
+
+  const hitEl = document.elementFromPoint(x, y);
+  const targetEl = hitEl ? hitEl.closest('.dwell-target') : null;
+  if (!targetEl) return { x, y };
+
+  const rect = targetEl.getBoundingClientRect();
+  const cx = rect.left + rect.width * 0.5;
+  const cy = rect.top + rect.height * 0.5;
+
+  return {
+    x: x + (cx - x) * pull,
+    y: y + (cy - y) * pull
+  };
+}
+
 // Continuous 60fps Gaze & Dwell Loop
 function runGazeDwellLoop(now) {
   const dt = now - lastFrameTime;
   lastFrameTime = now;
 
-  if (gazeMode === 'webcam') {
+  if (gazeMode === 'webcam' || gazeMode === 'head') {
     processVideoFrame();
   }
 
   if (gazeMode !== 'off') {
+    const modalOpen = document.querySelector('.modal-backdrop.open, #calibrationOverlay.open');
+
     smoothGazeX += (rawGazeX - smoothGazeX) * smoothingFactor;
     smoothGazeY += (rawGazeY - smoothGazeY) * smoothingFactor;
 
-    const pointer = document.getElementById('gazePointer');
-    pointer.style.left = `${smoothGazeX}px`;
-    pointer.style.top = `${smoothGazeY}px`;
+    const finalPt = !modalOpen
+      ? applyMagneticTileSnap(smoothGazeX, smoothGazeY)
+      : { x: smoothGazeX, y: smoothGazeY };
 
-    const modalOpen = document.querySelector('.modal-backdrop.open, #calibrationOverlay.open');
+    const pointer = document.getElementById('gazePointer');
+    pointer.style.left = `${finalPt.x}px`;
+    pointer.style.top = `${finalPt.y}px`;
+
     if (!modalOpen) {
-      const hitEl = document.elementFromPoint(smoothGazeX, smoothGazeY);
+      const hitEl = document.elementFromPoint(finalPt.x, finalPt.y);
       const targetEl = hitEl ? hitEl.closest('.dwell-target') : null;
 
       if (targetEl && (targetEl !== cooldownEl || now > cooldownUntil)) {
@@ -640,7 +856,7 @@ function runGazeDwellLoop(now) {
           activeDwellEl.click();
         }
       } else if (activeDwellEl) {
-        dwellProgressMs = Math.max(0, dwellProgressMs - dt * 1.6);
+        dwellProgressMs = Math.max(0, dwellProgressMs - dt * 1.4);
         const pct = (dwellProgressMs / dwellThresholdMs) * 100;
         activeDwellEl.style.setProperty('--dwell', pct.toFixed(1));
         if (dwellProgressMs === 0) activeDwellEl = null;
@@ -651,91 +867,177 @@ function runGazeDwellLoop(now) {
   requestAnimationFrame(runGazeDwellLoop);
 }
 
-// 5-Point Instant Calibration (1 Tap Per Circle)
-function startCalibration() {
-  // 1. Open Calibration Overlay FIRST so it never hangs
+function clearCalibTimers() {
+  calibTimers.forEach(t => clearTimeout(t));
+  calibTimers.forEach(t => clearInterval(t));
+  calibTimers = [];
+}
+
+// Bluey Character Fixation Calibration (Bluey, Bingo, Bandit, Chilli & Muffin!)
+function startCalibration(autoMode = true) {
+  clearCalibTimers();
   closeGazeModal();
+
   const overlay = document.getElementById('calibrationOverlay');
-  const container = document.getElementById('calibPointsContainer');
+  const container = document.getElementById('calibTargetContainer');
   const banner = document.getElementById('calibStatusBanner');
+  const subText = document.getElementById('calibSubText');
+  const bottomBtn = document.getElementById('bottomCaptureBtn');
+
   container.innerHTML = '';
   overlay.classList.add('open');
 
-  banner.textContent = faceDetected
-    ? '🟢 Eyes Locked! Look at each yellow circle & tap it'
-    : '⏳ Starting AI Eye Tracker...';
-
-  // 2. Ensure Webcam Mode is active in background
-  document.getElementById('gazeModeSelect').value = 'webcam';
+  if (document.getElementById('gazeModeSelect').value === 'off' ||
+      document.getElementById('gazeModeSelect').value === 'cursor') {
+    document.getElementById('gazeModeSelect').value = 'webcam';
+  }
   applyGazeSettings();
 
-  const coords = [
-    { id: 'tl', left: '14%', top: '16%' },
-    { id: 'tr', left: '86%', top: '16%' },
-    { id: 'c',  left: '50%', top: '50%' },
-    { id: 'bl', left: '14%', top: '82%' },
-    { id: 'br', left: '86%', top: '82%' }
+  subText.textContent = autoMode
+    ? 'Hands-Free Mode: Hold the screen steady and look at Bluey & her family as they pop up!'
+    : 'Manual Mode: Have him look at each Bluey character, then tap the green button below (or press Spacebar)!';
+
+  bottomBtn.style.display = autoMode ? 'none' : 'block';
+
+  const steps = [
+    { id: 'c',  left: '50%', top: '50%', charKey: 'bluey',  name: 'Bluey',  bg: 'radial-gradient(circle, #e0f2fe 0%, #38bdf8 75%, #0284c7 100%)', glow: '#38bdf8' },
+    { id: 'tl', left: '16%', top: '18%', charKey: 'bingo',  name: 'Bingo',  bg: 'radial-gradient(circle, #ffedd5 0%, #fb923c 75%, #ea580c 100%)', glow: '#fb923c' },
+    { id: 'tr', left: '84%', top: '18%', charKey: 'bandit', name: 'Bandit', bg: 'radial-gradient(circle, #dbeafe 0%, #3b82f6 75%, #1d4ed8 100%)', glow: '#3b82f6' },
+    { id: 'bl', left: '16%', top: '80%', charKey: 'chilli', name: 'Chilli', bg: 'radial-gradient(circle, #ffedd5 0%, #f97316 75%, #c2410c 100%)', glow: '#f97316' },
+    { id: 'br', left: '84%', top: '80%', charKey: 'muffin', name: 'Muffin', bg: 'radial-gradient(circle, #fae8ff 0%, #c084fc 75%, #7e22ce 100%)', glow: '#c084fc' }
   ];
 
-  const samples = {};
-  let completed = 0;
+  let stepIdx = 0;
+  let isSampling = false;
+  const recorded = {};
 
-  coords.forEach((pos) => {
-    const pt = document.createElement('div');
-    pt.className = 'calib-point';
-    pt.style.left = pos.left;
-    pt.style.top = pos.top;
-    pt.style.transform = 'translate(-50%, -50%)';
-    pt.textContent = 'TAP';
+  const target = document.createElement('div');
+  target.className = 'calib-single-target';
+  container.appendChild(target);
 
-    pt.onclick = () => {
-      if (pt.classList.contains('done')) return;
-      samples[pos.id] = { fx: latestFeatX, fy: latestFeatY };
-      pt.textContent = '✓';
-      pt.classList.add('done');
-      completed++;
+  const runStepPrompt = () => {
+    const s = steps[stepIdx];
+    target.classList.remove('sampling');
+    target.style.left = s.left;
+    target.style.top = s.top;
+    target.style.background = s.bg;
+    target.style.boxShadow = `0 0 34px ${s.glow}`;
+    target.innerHTML = `
+      <div class="calib-char-wrap">${getBlueyCharacterSVG(s.charKey)}</div>
+      <span class="calib-ring-pct" id="calibPct">${s.name}</span>
+    `;
+    banner.textContent = `🐾 Step ${stepIdx + 1} of 5: Look at ${s.name}!`;
 
-      if (completed >= coords.length) {
-        // Compute custom center and span from the 5 recorded gaze vectors
-        const allX = Object.values(samples).map(s => s.fx);
-        const allY = Object.values(samples).map(s => s.fy);
-        const minX = Math.min(...allX);
-        const maxX = Math.max(...allX);
-        const minY = Math.min(...allY);
-        const maxY = Math.max(...allY);
+    if (autoMode) {
+      const waitLock = setInterval(() => {
+        if (faceDetected && !isSampling) {
+          clearInterval(waitLock);
+          const tId = setTimeout(() => captureCurrentStep(0), 1050);
+          calibTimers.push(tId);
+        }
+      }, 100);
+      calibTimers.push(waitLock);
+    }
+  };
 
-        calibData = {
-          calibrated: true,
-          centerX: samples.c ? (samples.c.fx * 0.5 + ((minX + maxX) * 0.25)) : (minX + maxX) * 0.5,
-          centerY: samples.c ? (samples.c.fy * 0.5 + ((minY + maxY) * 0.25)) : (minY + maxY) * 0.5,
-          spanX: Math.max(0.05, (maxX - minX) * 1.15),
-          spanY: Math.max(0.04, (maxY - minY) * 1.15)
-        };
-        try {
-          localStorage.setItem('vb_gaze_calib', JSON.stringify(calibData));
-        } catch (e) {}
+  const captureCurrentStep = (settleDelayMs = 220) => {
+    if (isSampling) return;
+    isSampling = true;
 
-        banner.textContent = '✅ Calibration Complete!';
-        setTimeout(() => finishCalibration(), 450);
-      }
-    };
-    container.appendChild(pt);
-  });
+    const dId = setTimeout(() => {
+      target.classList.add('sampling');
+      playChime(580);
+
+      const bufX = [];
+      const bufY = [];
+      let count = 0;
+      const totalSamples = 20;
+
+      const sampler = setInterval(() => {
+        if (!faceDetected) return;
+        bufX.push(latestFeatX);
+        bufY.push(latestFeatY);
+        count++;
+
+        const pctEl = document.getElementById('calibPct');
+        if (pctEl) pctEl.textContent = `${Math.round((count / totalSamples) * 100)}%`;
+
+        if (count >= totalSamples) {
+          clearInterval(sampler);
+          bufX.sort((a, b) => a - b);
+          bufY.sort((a, b) => a - b);
+          const cleanX = bufX.slice(3, -3);
+          const cleanY = bufY.slice(3, -3);
+          const avgX = cleanX.reduce((a, b) => a + b, 0) / cleanX.length;
+          const avgY = cleanY.reduce((a, b) => a + b, 0) / cleanY.length;
+
+          recorded[steps[stepIdx].id] = { fx: avgX, fy: avgY };
+          playBlueyFanfare();
+
+          stepIdx++;
+          if (stepIdx < steps.length) {
+            isSampling = false;
+            runStepPrompt();
+          } else {
+            const cx = recorded.c.fx;
+            const cy = recorded.c.fy;
+            const leftAvgX = (recorded.tl.fx + recorded.bl.fx) * 0.5;
+            const rightAvgX = (recorded.tr.fx + recorded.br.fx) * 0.5;
+            const topAvgY = (recorded.tl.fy + recorded.tr.fy) * 0.5;
+            const botAvgY = (recorded.bl.fy + recorded.br.fy) * 0.5;
+
+            calibData = {
+              calibrated: true,
+              centerX: cx,
+              centerY: cy,
+              leftSpan: Math.max(0.02, Math.abs(cx - leftAvgX)),
+              rightSpan: Math.max(0.02, Math.abs(rightAvgX - cx)),
+              upSpan: Math.max(0.018, Math.abs(cy - topAvgY)),
+              downSpan: Math.max(0.018, Math.abs(botAvgY - cy)),
+              pts: recorded
+            };
+
+            try {
+              localStorage.setItem('vb_gaze_calib_v3', JSON.stringify(calibData));
+            } catch (e) {}
+
+            banner.textContent = '🎉 For Real Life! Calibration Complete!';
+            activeCalibTrigger = null;
+            setTimeout(() => finishCalibration(), 650);
+          }
+        }
+      }, 30);
+      calibTimers.push(sampler);
+    }, settleDelayMs);
+    calibTimers.push(dId);
+  };
+
+  target.onclick = () => captureCurrentStep(250);
+  bottomBtn.onclick = () => captureCurrentStep(250);
+  activeCalibTrigger = () => captureCurrentStep(50);
+
+  runStepPrompt();
 }
 
 function resetDefaultCalibration() {
+  clearCalibTimers();
   calibData = {
     calibrated: false,
     centerX: latestFeatX || 0,
     centerY: latestFeatY || 0,
-    spanX: 0.16,
-    spanY: 0.12
+    leftSpan: 0.075,
+    rightSpan: 0.075,
+    upSpan: 0.055,
+    downSpan: 0.055,
+    pts: null
   };
-  localStorage.removeItem('vb_gaze_calib');
+  localStorage.removeItem('vb_gaze_calib_v3');
   finishCalibration();
 }
 
 function finishCalibration() {
+  clearCalibTimers();
+  activeCalibTrigger = null;
   document.getElementById('calibrationOverlay').classList.remove('open');
 }
 
@@ -965,6 +1267,7 @@ function importBoardData(event) {
 window.addEventListener('DOMContentLoaded', async () => {
   await initDB();
   await loadDataFromDB();
+  applySentenceBarState();
   renderCategories();
   renderBoard();
   requestAnimationFrame(runGazeDwellLoop);
