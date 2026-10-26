@@ -122,6 +122,10 @@
     body.gaze-active .btn-center { display: flex; }
     .btn-sentence.active { background: var(--accent); color: #0f172a; }
     .btn-lock.unlocked { background: var(--yellow); color: #000; }
+
+    /* Edit-Mode Top Bar Buttons (Guaranteed via CSS when Edit Mode is unlocked) */
+    #iotHubBtn, #syncBtn { display: none; }
+    body.edit-mode #iotHubBtn, body.edit-mode #syncBtn { display: flex !important; }
     .btn-hub { background: var(--orange); color: #fff; }
 
     /* Context Category Tabs */
@@ -345,8 +349,8 @@
       </div>
       <div class="control-group">
         <button class="action-btn" onclick="cycleTileSize()">📐 Size</button>
-        <button id="iotHubBtn" class="action-btn btn-hub" style="display:none;" onclick="openSmartHubModal()">💡 Smart Home</button>
-        <button id="syncBtn" class="action-btn" style="display:none;" onclick="openSyncModal()">💾 Backup</button>
+        <button id="iotHubBtn" class="action-btn btn-hub" onclick="openSmartHubModal()">💡 Smart Home</button>
+        <button id="syncBtn" class="action-btn" onclick="openSyncModal()">💾 Backup</button>
         <button id="lockBtn" class="action-btn btn-lock" onclick="toggleEditMode()">🔒 Locked</button>
       </div>
     </div>
@@ -365,7 +369,7 @@
   <!-- Main Communication Grid -->
   <div id="boardGrid" class="board-grid"></div>
 
-  <!-- Add / Edit Tile Modal (Now with Board Jump & Smart Home Controls!) -->
+  <!-- Add / Edit Tile Modal (With Board Jump & Smart Home Controls) -->
   <div id="tileModal" class="modal-backdrop">
     <div class="modal">
       <h2 id="tileModalTitle">Add Communication Tile</h2>
@@ -384,7 +388,7 @@
         </div>
       </div>
 
-      <!-- NEW: Dynamic Board Navigation / Folder Linking -->
+      <!-- Dynamic Board Navigation / Folder Linking -->
       <div class="section-box">
         <h3>📂 Board Navigation (Optional)</h3>
         <div class="field">
@@ -395,7 +399,7 @@
         </div>
       </div>
 
-      <!-- NEW: Smart Home / Environmental Control (Hue & Smart TV) -->
+      <!-- Smart Home / Environmental Control (Hue & Smart TV) -->
       <div class="section-box">
         <h3>💡 Smart Home / Environment Action (Optional)</h3>
         <div class="field">
@@ -531,7 +535,7 @@
     </div>
   </div>
 
-  <!-- NEW: Smart Home Setup & Philips Hue Pairing Modal -->
+  <!-- Smart Home Setup & Philips Hue Pairing Modal -->
   <div id="smartHubModal" class="modal-backdrop">
     <div class="modal">
       <h2>💡 Smart Home Setup (Local Wi-Fi)</h2>
@@ -683,10 +687,13 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <!-- Cache-busted script URL so the browser NEVER runs an older cached app.js! -->
+  <script src="app.js?v=11"></script>
   <script>
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js');
+      navigator.serviceWorker.register('./sw.js?v=11').then(reg => {
+        reg.update();
+      });
     }
   </script>
 </body>
