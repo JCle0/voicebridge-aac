@@ -5,24 +5,30 @@ const DEFAULT_BOARDS = [
   { id: 'b1', name: 'Core Needs', order: 1 },
   { id: 'b2', name: 'Mealtime', order: 2 },
   { id: 'b3', name: 'Play & Fun', order: 3 },
-  { id: 'b4', name: 'Comfort & Body', order: 4 }
+  { id: 'b4', name: 'Comfort & Body', order: 4 },
+  { id: 'b5', name: 'My Room & TV', order: 5 }
 ];
 
 const DEFAULT_TILES = [
   { id: '1', category: 'Core Needs', label: 'Yes / Please', emoji: '✅', color: '#22c55e' },
   { id: '2', category: 'Core Needs', label: 'No / All Done', emoji: '🛑', color: '#ef4444' },
   { id: '3', category: 'Core Needs', label: 'Help Me', emoji: '🤝', color: '#eab308' },
-  { id: '4', category: 'Core Needs', label: 'Drink / Thirsty', emoji: '🥤', color: '#38bdf8' },
-  { id: '5', category: 'Core Needs', label: 'Hungry', emoji: '🍎', color: '#eab308' },
+  { id: '4', category: 'Core Needs', label: 'Drink / Thirsty', emoji: '🥤', color: '#38bdf8', targetBoard: 'Mealtime' },
+  { id: '5', category: 'Core Needs', label: 'Hungry', emoji: '🍎', color: '#eab308', targetBoard: 'Mealtime' },
   { id: '6', category: 'Core Needs', label: 'Bathroom', emoji: '🚽', color: '#38bdf8' },
+  { id: '15', category: 'Core Needs', label: 'My Room & TV', emoji: '📺', color: '#f97316', targetBoard: 'My Room & TV' },
   { id: '7', category: 'Mealtime', label: 'More Please', emoji: '➕', color: '#22c55e' },
   { id: '8', category: 'Mealtime', label: 'Water', emoji: '💧', color: '#38bdf8' },
   { id: '9', category: 'Mealtime', label: 'Favorite Snack', emoji: '🥨', color: '#eab308' },
   { id: '10', category: 'Play & Fun', label: 'Outside', emoji: '🌳', color: '#22c55e' },
-  { id: '11', category: 'Play & Fun', label: 'Music / Show', emoji: '🎵', color: '#a855f7' },
+  { id: '11', category: 'Play & Fun', label: 'Watch Bluey', emoji: '🐾', color: '#a855f7', iotAction: { type: 'roku_tv', rokuCmd: 'launch/291097', customIp: '' } },
   { id: '12', category: 'Comfort & Body', label: 'Too Loud', emoji: '🙉', color: '#ef4444' },
   { id: '13', category: 'Comfort & Body', label: 'Tired / Rest', emoji: '😴', color: '#a855f7' },
-  { id: '14', category: 'Comfort & Body', label: 'Something Hurts', emoji: '🩹', color: '#ef4444' }
+  { id: '14', category: 'Comfort & Body', label: 'Something Hurts', emoji: '🩹', color: '#ef4444' },
+  { id: '16', category: 'My Room & TV', label: 'Room Lights On/Off', emoji: '💡', color: '#eab308', iotAction: { type: 'hue_light', targetId: '1', command: 'toggle', colorPreset: 'warm', bri: 220 } },
+  { id: '17', category: 'My Room & TV', label: 'Calm Blue Light', emoji: '🔵', color: '#38bdf8', iotAction: { type: 'hue_light', targetId: '1', command: 'color', colorPreset: 'blue', bri: 180 } },
+  { id: '18', category: 'My Room & TV', label: 'Put On Bluey', emoji: '📺', color: '#a855f7', iotAction: { type: 'roku_tv', rokuCmd: 'launch/291097', customIp: '' } },
+  { id: '19', category: 'My Room & TV', label: 'Play / Pause TV', emoji: '⏯️', color: '#22c55e', iotAction: { type: 'roku_tv', rokuCmd: 'keypress/Play', customIp: '' } }
 ];
 
 let db;
@@ -33,10 +39,21 @@ let stripItems = [];
 let editMode = false;
 let showSentenceBar = localStorage.getItem('vb_show_sentence') === 'true';
 
+// Local Smart Home Hub Config (Saved in localStorage)
+let smartHubConfig = {
+  hueIp: '',
+  hueKey: '',
+  rokuIp: ''
+};
+try {
+  const savedHub = localStorage.getItem('vb_smart_hub');
+  if (savedHub) smartHubConfig = JSON.parse(savedHub);
+} catch (e) {}
+
 const SIZE_PRESETS = [
-  { name: 'Standard', min: '160px', height: '148px', emoji: '3.3rem', font: '1.25rem' },
-  { name: 'Large',    min: '240px', height: '190px', emoji: '4.3rem', font: '1.55rem' },
-  { name: 'Compact',  min: '120px', height: '115px', emoji: '2.4rem', font: '1.0rem' }
+  { name: 'Standard', min: '160px', height: '154px', emoji: '3.3rem', font: '1.25rem' },
+  { name: 'Large',    min: '240px', height: '195px', emoji: '4.3rem', font: '1.55rem' },
+  { name: 'Compact',  min: '120px', height: '120px', emoji: '2.4rem', font: '1.0rem' }
 ];
 let currentSizeIdx = 0;
 
@@ -47,8 +64,8 @@ let mediaRecorder = null;
 let audioChunks = [];
 
 // Eye Tracking & 1€ Velocity Filter State
-let gazeMode = 'off'; // 'off' | 'webcam' | 'eyes' | 'head' | 'cursor'
-let snapStrength = 'medium'; // 'off' | 'medium' | 'strong'
+let gazeMode = 'off';
+let snapStrength = 'medium';
 let dwellThresholdMs = 1100;
 let filterStabilization = 6;
 let gazeSensX = 7;
@@ -61,7 +78,6 @@ let rawGazeY = window.innerHeight / 2;
 let smoothGazeX = rawGazeX;
 let smoothGazeY = rawGazeY;
 
-// Magnet Lock During Calibration
 let calibMagnetActive = false;
 let calibMagnetX = 0;
 let calibMagnetY = 0;
@@ -72,7 +88,6 @@ let lastFrameTime = performance.now();
 let cooldownEl = null;
 let cooldownUntil = 0;
 
-// MediaPipe FaceLandmarker instance & live feature vector
 let faceLandmarker = null;
 let mpLoading = false;
 let camStream = null;
@@ -87,23 +102,14 @@ let initialZeroFrames = 0;
 let activeCalibTrigger = null;
 let calibIntervalId = null;
 
-// Clear older calibration keys so inverted v4/v3 data never pollutes this build
-try {
-  localStorage.removeItem('vb_gaze_calib');
-  localStorage.removeItem('vb_gaze_calib_v2');
-  localStorage.removeItem('vb_gaze_calib_v3');
-  localStorage.removeItem('vb_gaze_calib_v4');
-} catch (e) {}
-
-// Signed Quadrant Calibration Model (v5)
 let calibData = {
   calibrated: false,
   centerX: 0,
   centerY: 0,
-  leftDeltaX: -0.055,  // Signed delta when looking Left (negative)
-  rightDeltaX: 0.055,  // Signed delta when looking Right (positive)
-  upDeltaY: -0.040,    // Signed delta when looking Up (negative)
-  downDeltaY: 0.040,   // Signed delta when looking Down (positive)
+  leftDeltaX: -0.055,
+  rightDeltaX: 0.055,
+  upDeltaY: -0.040,
+  downDeltaY: 0.040,
   pts: null
 };
 
@@ -112,7 +118,7 @@ try {
   if (savedCalib) calibData = JSON.parse(savedCalib);
 } catch (e) {}
 
-// Built-in Vector Illustrations for Bluey, Bingo, Bandit, Chilli & Muffin (No text labels)
+// Built-in Vector Illustrations for Bluey, Bingo, Bandit, Chilli & Muffin
 function getBlueyCharacterSVG(charKey) {
   const configs = {
     bluey: {
@@ -204,6 +210,17 @@ function playBlueyFanfare() {
   });
 }
 
+function showToast(msg, duration = 2200) {
+  const t = document.getElementById('iotToast');
+  if (!t) return;
+  t.textContent = msg;
+  t.style.display = 'flex';
+  clearTimeout(window._iotToastTimer);
+  window._iotToastTimer = setTimeout(() => {
+    t.style.display = 'none';
+  }, duration);
+}
+
 // 1. Database Setup
 function initDB() {
   return new Promise((resolve, reject) => {
@@ -236,6 +253,12 @@ async function loadDataFromDB() {
         boards = [...DEFAULT_BOARDS];
       } else {
         boards = req.result.sort((a, b) => a.order - b.order);
+        // Ensure new "My Room & TV" board exists if upgrading from earlier build
+        if (!boards.some(b => b.name === 'My Room & TV')) {
+          const roomBoard = { id: 'b5', name: 'My Room & TV', order: boards.length + 1 };
+          boards.push(roomBoard);
+          saveBoardToDB(roomBoard);
+        }
       }
       currentCategory = boards[0]?.name || 'Core Needs';
       resolve();
@@ -252,6 +275,20 @@ async function loadDataFromDB() {
         tiles = [...DEFAULT_TILES];
       } else {
         tiles = req.result;
+        // Auto-upgrade Hungry & Drink to link to Mealtime if they don't have a targetBoard yet
+        tiles.forEach(t => {
+          if ((t.label === 'Hungry' || t.label === 'Drink / Thirsty') && t.targetBoard === undefined) {
+            t.targetBoard = 'Mealtime';
+            saveTileToDB(t);
+          }
+        });
+        // Add starter Smart Room tiles if upgrading
+        if (!tiles.some(t => t.category === 'My Room & TV')) {
+          DEFAULT_TILES.filter(t => t.category === 'My Room & TV' || t.id === '15').forEach(t => {
+            tiles.push(t);
+            saveTileToDB(t);
+          });
+        }
       }
       resolve();
     };
@@ -272,10 +309,16 @@ function renameBoardInDB(board, oldName, newName) {
     tx.objectStore('boards').put(board);
     const tileStore = tx.objectStore('tiles');
     tiles.forEach(t => {
+      let changed = false;
       if (t.category === oldName) {
         t.category = newName;
-        tileStore.put(t);
+        changed = true;
       }
+      if (t.targetBoard === oldName) {
+        t.targetBoard = newName;
+        changed = true;
+      }
+      if (changed) tileStore.put(t);
     });
     tx.oncomplete = () => resolve();
   });
@@ -335,6 +378,21 @@ function cycleTileSize() {
 function renderCategories() {
   const bar = document.getElementById('categoryBar');
   bar.innerHTML = '';
+
+  const homeBoardName = boards[0]?.name || 'Core Needs';
+
+  // Quick "🏠 Back to Core" button when viewing a sub-board
+  if (currentCategory !== homeBoardName) {
+    const homeBtn = document.createElement('button');
+    homeBtn.className = 'home-jump-btn visible dwell-target';
+    homeBtn.innerHTML = '⬅️ 🏠 Core';
+    homeBtn.onclick = () => {
+      currentCategory = homeBoardName;
+      renderCategories();
+      renderBoard();
+    };
+    bar.appendChild(homeBtn);
+  }
 
   boards.forEach(board => {
     const btn = document.createElement('button');
@@ -465,6 +523,29 @@ function renderBoard() {
     label.textContent = tile.label;
     card.appendChild(label);
 
+    // Render Bottom Indicator Pills for Board Jump or Smart Home Action
+    const hasJump = tile.targetBoard && tile.targetBoard.trim() !== '';
+    const hasIot = tile.iotAction && tile.iotAction.type && tile.iotAction.type !== 'none';
+    if (hasJump || hasIot) {
+      const metaRow = document.createElement('div');
+      metaRow.className = 'tile-meta-row';
+      if (hasJump) {
+        const jumpPill = document.createElement('span');
+        jumpPill.className = 'tile-pill pill-jump';
+        jumpPill.textContent = `📂 ➔ ${tile.targetBoard}`;
+        metaRow.appendChild(jumpPill);
+      }
+      if (hasIot) {
+        const iotPill = document.createElement('span');
+        iotPill.className = 'tile-pill pill-iot';
+        const iotIcon = tile.iotAction.type.startsWith('hue') ? '💡 Hue' :
+                        tile.iotAction.type === 'roku_tv' ? '📺 TV' : '⚡ Smart';
+        iotPill.textContent = iotIcon;
+        metaRow.appendChild(iotPill);
+      }
+      card.appendChild(metaRow);
+    }
+
     card.onclick = () => handleTileTap(tile, card);
     grid.appendChild(card);
   });
@@ -476,7 +557,7 @@ function renderBoard() {
   grid.appendChild(addCard);
 }
 
-// 3. Speech & Audio Engine
+// 3. Speech, Board Jump & Smart Home Execution Engine
 function playTileAudio(tile) {
   if (tile.audioDataUrl) {
     const audio = new Audio(tile.audioDataUrl);
@@ -489,15 +570,206 @@ function playTileAudio(tile) {
   }
 }
 
-function handleTileTap(tile, cardEl) {
+async function handleTileTap(tile, cardEl) {
   if (cardEl) {
     cardEl.classList.add('dwell-triggered');
     setTimeout(() => cardEl.classList.remove('dwell-triggered'), 240);
   }
+
+  // 1. Speak the Tile
   playTileAudio(tile);
+
+  // 2. Add to Sentence Strip if enabled
   if (showSentenceBar) {
     stripItems.push(tile);
     renderStrip();
+  }
+
+  // 3. Trigger Smart Home Action (Philips Hue / Smart TV / Webhook) if configured
+  if (tile.iotAction && tile.iotAction.type && tile.iotAction.type !== 'none') {
+    executeSmartHomeAction(tile.iotAction, tile.label);
+  }
+
+  // 4. Switch to Target Board if configured (after a brief 420ms visual confirmation pause)
+  if (tile.targetBoard && boards.some(b => b.name === tile.targetBoard)) {
+    setTimeout(() => {
+      currentCategory = tile.targetBoard;
+      renderCategories();
+      renderBoard();
+    }, 420);
+  }
+}
+
+// Execute Philips Hue, Roku Smart TV, or Webhook Locally over Home Wi-Fi
+async function executeSmartHomeAction(iot, label) {
+  try {
+    if (iot.type === 'hue_light' || iot.type === 'hue_group') {
+      const ip = (smartHubConfig.hueIp || '').trim();
+      const key = (smartHubConfig.hueKey || '').trim();
+      if (!ip || !key) {
+        showToast('⚠️ Pair Philips Hue in 💡 Smart Home first!', 3000);
+        return;
+      }
+
+      const id = (iot.targetId || '1').trim();
+      const isGroup = iot.type === 'hue_group';
+      const baseUrl = `http://${ip}/api/${key}/${isGroup ? 'groups' : 'lights'}/${id}`;
+      const stateEndpoint = `${baseUrl}/${isGroup ? 'action' : 'state'}`;
+
+      let bodyPayload = { on: true };
+
+      if (iot.command === 'off') {
+        bodyPayload = { on: false };
+      } else if (iot.command === 'on') {
+        bodyPayload = { on: true, bri: 254 };
+      } else if (iot.command === 'toggle') {
+        // Query current light/group state to toggle cleanly
+        try {
+          const statusRes = await fetch(baseUrl);
+          const statusData = await statusRes.json();
+          const currentlyOn = isGroup
+            ? (statusData.state && statusData.state.any_on)
+            : (statusData.state && statusData.state.on);
+          bodyPayload = { on: !currentlyOn };
+        } catch (e) {
+          bodyPayload = { on: true };
+        }
+      } else if (iot.command === 'color') {
+        const presets = {
+          warm:   { ct: 400, sat: 200 },
+          blue:   { hue: 45000, sat: 254 },
+          purple: { hue: 50000, sat: 254 },
+          green:  { hue: 25500, sat: 254 },
+          red:    { hue: 0, sat: 254 }
+        };
+        const chosen = presets[iot.colorPreset] || presets.warm;
+        bodyPayload = {
+          on: true,
+          bri: Math.min(254, Math.max(1, parseInt(iot.bri || 200, 10))),
+          ...chosen
+        };
+      }
+
+      await fetch(stateEndpoint, {
+        method: 'PUT',
+        body: JSON.stringify(bodyPayload)
+      });
+      showToast(`💡 Hue: ${label}`);
+    } else if (iot.type === 'roku_tv') {
+      const tvIp = (iot.customIp || smartHubConfig.rokuIp || '').trim();
+      if (!tvIp) {
+        showToast('⚠️ Set your Roku TV IP in 💡 Smart Home first!', 3000);
+        return;
+      }
+      const cmd = iot.rokuCmd || 'keypress/Home';
+      // If launching a streaming channel like Disney+, wake the TV first!
+      if (cmd.startsWith('launch/')) {
+        fetch(`http://${tvIp}:8060/keypress/PowerOn`, { method: 'POST', mode: 'no-cors' }).catch(() => {});
+      }
+      await fetch(`http://${tvIp}:8060/${cmd}`, {
+        method: 'POST',
+        mode: 'no-cors'
+      });
+      showToast(`📺 TV: ${label}`);
+    } else if (iot.type === 'webhook') {
+      const url = (iot.url || '').trim();
+      if (!url) return;
+      const method = iot.method || 'POST';
+      const opts = { method };
+      if (method !== 'GET' && iot.body && iot.body.trim()) {
+        opts.body = iot.body.trim();
+      }
+      await fetch(url, opts).catch(() => fetch(url, { ...opts, mode: 'no-cors' }));
+      showToast(`⚡ Sent: ${label}`);
+    }
+  } catch (err) {
+    showToast(`⚠️ Check Wi-Fi / Hub Settings (${err.message || 'Network Blocked'})`, 3200);
+  }
+}
+
+// Smart Home Hub Setup & Philips Hue Bridge Pairing Functions
+function openSmartHubModal() {
+  document.getElementById('hubHueIp').value = smartHubConfig.hueIp || '';
+  document.getElementById('hubHueKey').value = smartHubConfig.hueKey || '';
+  document.getElementById('hubRokuIp').value = smartHubConfig.rokuIp || '';
+  document.getElementById('huePairStatus').textContent = '';
+  document.getElementById('smartHubModal').classList.add('open');
+}
+
+function closeSmartHubModal() {
+  document.getElementById('smartHubModal').classList.remove('open');
+}
+
+function saveSmartHubSettings() {
+  smartHubConfig.hueIp = document.getElementById('hubHueIp').value.trim();
+  smartHubConfig.hueKey = document.getElementById('hubHueKey').value.trim();
+  smartHubConfig.rokuIp = document.getElementById('hubRokuIp').value.trim();
+  try {
+    localStorage.setItem('vb_smart_hub', JSON.stringify(smartHubConfig));
+  } catch (e) {}
+  closeSmartHubModal();
+  showToast('✅ Smart Home Hub Settings Saved!');
+}
+
+async function discoverHueBridge() {
+  const statusEl = document.getElementById('huePairStatus');
+  statusEl.textContent = '🔍 Searching local network via Hue Discovery...';
+  try {
+    const res = await fetch('https://discovery.meethue.com/');
+    const data = await res.json();
+    if (Array.isArray(data) && data.length > 0 && data[0].internalipaddress) {
+      document.getElementById('hubHueIp').value = data[0].internalipaddress;
+      statusEl.textContent = `✅ Found Hue Bridge at ${data[0].internalipaddress}! Now press the physical button on top of your Hue Bridge and click Pair.`;
+    } else {
+      statusEl.textContent = '⚠️ Could not auto-detect. Please type your Hue Bridge IP from your router or Hue app.';
+    }
+  } catch (err) {
+    statusEl.textContent = '⚠️ Discovery blocked or offline. Type your Hue Bridge IP manually (e.g., 192.168.1.x).';
+  }
+}
+
+async function pairHueBridge() {
+  const ip = document.getElementById('hubHueIp').value.trim();
+  const statusEl = document.getElementById('huePairStatus');
+  if (!ip) return alert('Please enter your Philips Hue Bridge IP address first.');
+
+  statusEl.textContent = '⏳ Connecting to Hue Bridge...';
+  try {
+    const res = await fetch(`http://${ip}/api`, {
+      method: 'POST',
+      body: JSON.stringify({ devicetype: 'voicebridge_aac#son' })
+    });
+    const data = await res.json();
+    if (Array.isArray(data) && data[0]?.error?.type === 101) {
+      statusEl.innerHTML = `<span style="color:#fde047;">👉 Press the physical link button on top of your Philips Hue Bridge right now, then click Pair again within 30 seconds!</span>`;
+    } else if (Array.isArray(data) && data[0]?.success?.username) {
+      const username = data[0].success.username;
+      document.getElementById('hubHueKey').value = username;
+      smartHubConfig.hueIp = ip;
+      smartHubConfig.hueKey = username;
+      localStorage.setItem('vb_smart_hub', JSON.stringify(smartHubConfig));
+      statusEl.innerHTML = `<span style="color:#22c55e;">🎉 Paired Successfully! Key saved. Click "📋 View Light IDs" to see your bulb numbers.</span>`;
+    } else {
+      statusEl.textContent = 'Unexpected response: ' + JSON.stringify(data);
+    }
+  } catch (err) {
+    statusEl.innerHTML = `<span style="color:#f87171;">⚠️ Connection blocked by browser HTTPS rules. See yellow box below to allow Insecure Content for local Wi-Fi, or run from launch_dev.bat.</span>`;
+  }
+}
+
+async function listHueLights() {
+  const ip = document.getElementById('hubHueIp').value.trim();
+  const key = document.getElementById('hubHueKey').value.trim();
+  const statusEl = document.getElementById('huePairStatus');
+  if (!ip || !key) return alert('Pair your Hue Bridge first so IP and Key are filled in.');
+
+  try {
+    const res = await fetch(`http://${ip}/api/${key}/lights`);
+    const lights = await res.json();
+    const lines = Object.keys(lights).map(id => `<b>ID ${id}:</b> ${lights[id].name} (${lights[id].state?.on ? 'ON' : 'OFF'})`);
+    statusEl.innerHTML = lines.length ? lines.join('<br/>') : 'No lights found.';
+  } catch (err) {
+    statusEl.textContent = 'Could not fetch lights: ' + err.message;
   }
 }
 
@@ -525,7 +797,7 @@ function clearStrip() {
   renderStrip();
 }
 
-// 4. Corrected X/Y Polarity + Rigid-Bone Vertical Gaze Engine
+// 4. Eye-Gaze Engine
 function openGazeModal() {
   document.getElementById('gazeModal').classList.add('open');
 }
@@ -682,7 +954,6 @@ function processVideoFrame() {
     faceDetected = true;
     camBox.classList.add('tracking-ok');
 
-    // 1. De-rotate Roll Angle between outer eye corners (33 and 263)
     const dxEye = L[263].x - L[33].x;
     const dyEye = L[263].y - L[33].y;
     const rollAngle = Math.atan2(dyEye, dxEye);
@@ -690,7 +961,7 @@ function processVideoFrame() {
     const sinR = Math.sin(-rollAngle);
     const faceScale = Math.hypot(dxEye, dyEye) || 0.15;
 
-    const origin = L[168]; // Rigid bridge between eyes
+    const origin = L[168];
     const rel = (idx) => rotateDeRoll(
       (L[idx].x - origin.x) / faceScale,
       (L[idx].y - origin.y) / faceScale,
@@ -712,13 +983,11 @@ function processVideoFrame() {
     const lEyeTop = rel(386);
     const lIris = rel(473);
 
-    // 2. Head Yaw & Pitch (+X = Screen Right, +Y = Screen Down)
     const cheekMidX = (rightCheek.x + leftCheek.x) * 0.5;
     const cheekMidY = (rightCheek.y + leftCheek.y) * 0.5;
-    const headYaw = cheekMidX - noseTip.x; // Positive when turning nose toward Right of screen
-    const headPitch = noseTip.y - cheekMidY; // Positive when tilting nose Down toward bottom of screen
+    const headYaw = cheekMidX - noseTip.x;
+    const headPitch = noseTip.y - cheekMidY;
 
-    // 3. Rigid-Corner Iris Position (+X = Screen Right, +Y = Screen Down)
     const w1 = Math.max(0.05, rEyeInner.x - rEyeOuter.x);
     const w2 = Math.max(0.05, lEyeOuter.x - lEyeInner.x);
 
@@ -726,13 +995,11 @@ function processVideoFrame() {
     const lMidX = (lEyeOuter.x + lEyeInner.x) * 0.5;
     const irisX = (((rMidX - rIris.x) / w1) + ((lMidX - lIris.x) / w2)) * 0.5;
 
-    // Vertical Iris + Upper Eyelid measured against FIXED Eye Corners (never cancels out!)
     const rCornerY = (rEyeOuter.y + rEyeInner.y) * 0.5;
     const lCornerY = (lEyeOuter.y + lEyeInner.y) * 0.5;
     const irisRigidY = (((rIris.y - rCornerY) / w1) + ((lIris.y - lCornerY) / w2)) * 0.5;
     const lidPitchY = (((rEyeTop.y - rCornerY) / w1) + ((lEyeTop.y - lCornerY) / w2)) * 0.5;
 
-    // 4. Camera-Relative MediaPipe Blendshapes (+X = Screen Right, +Y = Screen Down)
     let lookUp = 0, lookDown = 0, lookRight = 0, lookLeft = 0;
     if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
       const cats = results.faceBlendshapes[0].categories;
@@ -749,7 +1016,6 @@ function processVideoFrame() {
     const blendX = lookRight - lookLeft;
     const blendY = lookDown - lookUp;
 
-    // Combine according to selected Tracking Style
     if (gazeMode === 'head') {
       latestFeatX = (headYaw * 1.55) + (blendX * 0.25);
       latestFeatY = (headPitch * 1.65) + (blendY * 0.30);
@@ -757,7 +1023,6 @@ function processVideoFrame() {
       latestFeatX = (blendX * 1.35) + (irisX * 1.75) + (headYaw * 0.35);
       latestFeatY = (blendY * 1.45) + (irisRigidY * 2.20) + (lidPitchY * 1.35) + (headPitch * 0.45);
     } else {
-      // Balanced Eye + Natural Head Turn
       latestFeatX = (headYaw * 1.05) + (blendX * 0.95) + (irisX * 1.35);
       latestFeatY = (headPitch * 1.10) + (blendY * 1.15) + (irisRigidY * 1.85) + (lidPitchY * 1.15);
     }
@@ -765,7 +1030,6 @@ function processVideoFrame() {
     if (invertX) latestFeatX = -latestFeatX;
     if (invertY) latestFeatY = -latestFeatY;
 
-    // Auto-zero center on startup if not calibrated yet so phone holding angle starts centered!
     if (!calibData.calibrated && initialZeroFrames < 12) {
       initialZeroFrames++;
       calibData.centerX = (calibData.centerX * (initialZeroFrames - 1) + latestFeatX) / initialZeroFrames;
@@ -779,14 +1043,12 @@ function processVideoFrame() {
     smoothFeatX += (latestFeatX - smoothFeatX) * 0.45;
     smoothFeatY += (latestFeatY - smoothFeatY) * 0.45;
 
-    // 5. Independent Horizontal & Vertical Mapping around Center
     const sensScaleX = 0.35 + (gazeSensX * 0.13);
     const sensScaleY = 0.35 + (gazeSensY * 0.14);
 
     const dx = smoothFeatX - calibData.centerX;
     const dy = smoothFeatY - calibData.centerY;
 
-    // Use signed quadrant calibration deltas so polarity is always preserved
     let du = 0;
     if (dx >= 0) {
       du = (dx / Math.max(0.010, Math.abs(calibData.rightDeltaX))) * 0.36 * sensScaleX;
@@ -812,7 +1074,6 @@ function processVideoFrame() {
   }
 }
 
-// External Tracker / Mouse / Touch-Drag Dwell Support
 window.addEventListener('mousemove', (e) => {
   if (gazeMode === 'cursor') {
     rawGazeX = e.clientX;
@@ -858,7 +1119,6 @@ function applyMagneticTileSnap(x, y) {
   };
 }
 
-// 1€ Filter (One-Euro Velocity-Adaptive Filter)
 function computeOneEuroAlpha(dtMs, speedPxPerSec) {
   const minAlpha = Math.max(0.03, (10 - filterStabilization) * 0.015);
   const beta = 0.00055;
@@ -866,7 +1126,6 @@ function computeOneEuroAlpha(dtMs, speedPxPerSec) {
   return Math.min(0.65, dynamicAlpha * (dtMs / 16.67));
 }
 
-// Continuous 60fps Gaze & Dwell Loop
 function runGazeDwellLoop(now) {
   const dt = Math.min(50, Math.max(4, now - lastFrameTime));
   lastFrameTime = now;
@@ -943,7 +1202,6 @@ function clearCalibTimers() {
   }
 }
 
-// Bluey Gaze-Lock Calibration (Supports Auto Gaze-Lock AND Instant Button/Tap Capture!)
 function startCalibration(autoMode = true) {
   clearCalibTimers();
   closeGazeModal();
@@ -967,7 +1225,6 @@ function startCalibration(autoMode = true) {
     ? 'Look steadily at each character (or tap the green button below anytime while looking)!'
     : 'Look at the character, then tap the green button at the bottom (or press Spacebar)!';
 
-  // Always show the bottom capture button on mobile so you can also trigger manually without blocking the top camera!
   bottomBtn.style.display = 'block';
 
   const steps = [
@@ -1049,7 +1306,6 @@ function startCalibration(autoMode = true) {
       const topAvgY = (recorded.tl.fy + recorded.tr.fy) * 0.5;
       const botAvgY = (recorded.bl.fy + recorded.br.fy) * 0.5;
 
-      // Check if user's horizontal or vertical axis was naturally inverted during calibration
       if (rightAvgX < leftAvgX) {
         invertX = !invertX;
         document.getElementById('invertXCheck').checked = invertX;
@@ -1141,7 +1397,6 @@ function startCalibration(autoMode = true) {
     calibMagnetY = steps[stepIdx].pctY * window.innerHeight;
     smoothGazeX = calibMagnetX;
     smoothGazeY = calibMagnetY;
-    // Wait 180ms for finger tap vibration to settle, then record!
     setTimeout(() => {
       for (let i = 0; i < 12; i++) {
         bufX.push(smoothFeatX);
@@ -1178,31 +1433,59 @@ function finishCalibration() {
   document.getElementById('calibrationOverlay').classList.remove('open');
 }
 
-// 5. Parent Edit Mode, Tile Add/Edit Modal, & Backup
+// 5. Parent Edit Mode, Tile Add/Edit Modal (with Board Jump & Smart Home), & Backup
 function toggleEditMode() {
   editMode = !editMode;
   document.body.classList.toggle('edit-mode', editMode);
   const lockBtn = document.getElementById('lockBtn');
   const syncBtn = document.getElementById('syncBtn');
+  const iotHubBtn = document.getElementById('iotHubBtn');
   if (editMode) {
     lockBtn.textContent = '🔓 Edit';
     lockBtn.classList.add('unlocked');
     syncBtn.style.display = 'flex';
+    iotHubBtn.style.display = 'flex';
   } else {
     lockBtn.textContent = '🔒 Locked';
     lockBtn.classList.remove('unlocked');
     syncBtn.style.display = 'none';
+    iotHubBtn.style.display = 'none';
+  }
+}
+
+function updateIotFieldsUI() {
+  const type = document.getElementById('tileIotType').value;
+  document.getElementById('iotHueFields').style.display =
+    (type === 'hue_light' || type === 'hue_group') ? 'flex' : 'none';
+  document.getElementById('iotRokuFields').style.display =
+    type === 'roku_tv' ? 'flex' : 'none';
+  document.getElementById('iotWebhookFields').style.display =
+    type === 'webhook' ? 'flex' : 'none';
+
+  if (type === 'hue_light' || type === 'hue_group') {
+    document.getElementById('hueTargetLabel').textContent =
+      type === 'hue_group' ? 'Hue Room / Group ID #' : 'Hue Light Bulb ID #';
+    const cmd = document.getElementById('hueCommand').value;
+    document.getElementById('hueColorRow').style.display = cmd === 'color' ? 'flex' : 'none';
   }
 }
 
 function openTileModal(tileToEdit = null) {
   const catSelect = document.getElementById('tileCategorySelect');
+  const targetBoardSelect = document.getElementById('tileTargetBoardSelect');
   catSelect.innerHTML = '';
+  targetBoardSelect.innerHTML = '<option value="">-- Stay on Current Board --</option>';
+
   boards.forEach(b => {
     const opt = document.createElement('option');
     opt.value = b.name;
     opt.textContent = b.name;
     catSelect.appendChild(opt);
+
+    const jumpOpt = document.createElement('option');
+    jumpOpt.value = b.name;
+    jumpOpt.textContent = `📂 Switch to "${b.name}" Board`;
+    targetBoardSelect.appendChild(jumpOpt);
   });
 
   document.getElementById('tileImage').value = '';
@@ -1214,6 +1497,19 @@ function openTileModal(tileToEdit = null) {
     catSelect.value = tileToEdit.category;
     document.getElementById('tileEmoji').value = tileToEdit.emoji || '⭐';
     document.getElementById('tileColor').value = tileToEdit.color || '#38bdf8';
+    targetBoardSelect.value = tileToEdit.targetBoard || '';
+
+    const iot = tileToEdit.iotAction || { type: 'none' };
+    document.getElementById('tileIotType').value = iot.type || 'none';
+    document.getElementById('hueTargetId').value = iot.targetId || '1';
+    document.getElementById('hueCommand').value = iot.command || 'toggle';
+    document.getElementById('hueColorPreset').value = iot.colorPreset || 'warm';
+    document.getElementById('hueBri').value = iot.bri || 200;
+    document.getElementById('rokuCommand').value = iot.rokuCmd || 'launch/291097';
+    document.getElementById('rokuCustomIp').value = iot.customIp || '';
+    document.getElementById('webhookMethod').value = iot.method || 'POST';
+    document.getElementById('webhookUrl').value = iot.url || '';
+    document.getElementById('webhookBody').value = iot.body || '';
 
     currentTileImageDataUrl = tileToEdit.imageDataUrl || null;
     recordedAudioDataUrl = tileToEdit.audioDataUrl || null;
@@ -1224,11 +1520,24 @@ function openTileModal(tileToEdit = null) {
     catSelect.value = currentCategory;
     document.getElementById('tileEmoji').value = '⭐';
     document.getElementById('tileColor').value = '#38bdf8';
+    targetBoardSelect.value = '';
+
+    document.getElementById('tileIotType').value = 'none';
+    document.getElementById('hueTargetId').value = '1';
+    document.getElementById('hueCommand').value = 'toggle';
+    document.getElementById('hueColorPreset').value = 'warm';
+    document.getElementById('hueBri').value = 200;
+    document.getElementById('rokuCommand').value = 'launch/291097';
+    document.getElementById('rokuCustomIp').value = '';
+    document.getElementById('webhookMethod').value = 'POST';
+    document.getElementById('webhookUrl').value = '';
+    document.getElementById('webhookBody').value = '';
 
     currentTileImageDataUrl = null;
     recordedAudioDataUrl = null;
   }
 
+  updateIotFieldsUI();
   updateModalMediaStatus();
   document.getElementById('tileModal').classList.add('open');
 }
@@ -1299,7 +1608,7 @@ async function toggleRecording() {
     }
   } else {
     mediaRecorder.stop();
-    btn.textContent = '🎙️ Record Voice';
+    btn.textContent = '🎙️ Record';
     btn.classList.remove('recording');
   }
 }
@@ -1319,7 +1628,34 @@ async function saveNewTile() {
   const selectedCategory = document.getElementById('tileCategorySelect').value || currentCategory;
   const emoji = document.getElementById('tileEmoji').value.trim() || '⭐';
   const color = document.getElementById('tileColor').value;
+  const targetBoard = document.getElementById('tileTargetBoardSelect').value || '';
   const imgInput = document.getElementById('tileImage');
+
+  // Build Smart Home Action object
+  const iotType = document.getElementById('tileIotType').value;
+  let iotAction = { type: 'none' };
+  if (iotType === 'hue_light' || iotType === 'hue_group') {
+    iotAction = {
+      type: iotType,
+      targetId: document.getElementById('hueTargetId').value.trim() || '1',
+      command: document.getElementById('hueCommand').value,
+      colorPreset: document.getElementById('hueColorPreset').value,
+      bri: parseInt(document.getElementById('hueBri').value || '200', 10)
+    };
+  } else if (iotType === 'roku_tv') {
+    iotAction = {
+      type: 'roku_tv',
+      rokuCmd: document.getElementById('rokuCommand').value,
+      customIp: document.getElementById('rokuCustomIp').value.trim()
+    };
+  } else if (iotType === 'webhook') {
+    iotAction = {
+      type: 'webhook',
+      method: document.getElementById('webhookMethod').value,
+      url: document.getElementById('webhookUrl').value.trim(),
+      body: document.getElementById('webhookBody').value.trim()
+    };
+  }
 
   let finalImageDataUrl = currentTileImageDataUrl;
   if (imgInput.files && imgInput.files[0]) {
@@ -1332,6 +1668,8 @@ async function saveNewTile() {
     label,
     emoji,
     color,
+    targetBoard,
+    iotAction,
     imageDataUrl: finalImageDataUrl,
     audioDataUrl: recordedAudioDataUrl
   };
@@ -1358,7 +1696,7 @@ function closeSyncModal() {
 }
 
 function exportBoardData() {
-  const payload = { boards, tiles };
+  const payload = { boards, tiles, smartHubConfig };
   const dataStr = JSON.stringify(payload, null, 2);
   const blob = new Blob([dataStr], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -1377,6 +1715,10 @@ function importBoardData(event) {
       const parsed = JSON.parse(e.target.result);
       const importedBoards = Array.isArray(parsed) ? DEFAULT_BOARDS : (parsed.boards || DEFAULT_BOARDS);
       const importedTiles = Array.isArray(parsed) ? parsed : (parsed.tiles || []);
+      if (parsed.smartHubConfig) {
+        smartHubConfig = parsed.smartHubConfig;
+        localStorage.setItem('vb_smart_hub', JSON.stringify(smartHubConfig));
+      }
 
       const tx = db.transaction(['boards', 'tiles'], 'readwrite');
       tx.objectStore('boards').clear();
@@ -1391,7 +1733,7 @@ function importBoardData(event) {
         renderCategories();
         renderBoard();
         closeSyncModal();
-        alert('All custom boards, photos, and voices restored!');
+        alert('All custom boards, smart home settings, photos, and voices restored!');
       };
     } catch (err) {
       alert('Invalid backup file.');

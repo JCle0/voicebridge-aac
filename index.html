@@ -15,6 +15,7 @@
       --yellow: #eab308;
       --red: #ef4444;
       --purple: #a855f7;
+      --orange: #f97316;
       --tile-min: 160px;
       --tile-height: 150px;
       --tile-emoji: 3.4rem;
@@ -121,12 +122,20 @@
     body.gaze-active .btn-center { display: flex; }
     .btn-sentence.active { background: var(--accent); color: #0f172a; }
     .btn-lock.unlocked { background: var(--yellow); color: #000; }
+    .btn-hub { background: var(--orange); color: #fff; }
 
     /* Context Category Tabs */
     .category-bar {
       display: flex; align-items: center; gap: 8px; padding: 8px 12px;
       background: #151f32; overflow-x: auto; flex-shrink: 0;
     }
+    .home-jump-btn {
+      padding: 10px 14px; border-radius: 10px; border: 2px solid var(--green);
+      background: rgba(34, 197, 94, 0.18); color: #fff;
+      font-size: 1rem; font-weight: 800; cursor: pointer; white-space: nowrap;
+      display: none; align-items: center; gap: 6px; flex-shrink: 0;
+    }
+    .home-jump-btn.visible { display: flex; }
     .cat-tab {
       padding: 10px 16px; border-radius: 10px; border: 2px solid #334155;
       background: var(--panel); color: var(--text);
@@ -163,7 +172,7 @@
       background: var(--panel); border-radius: 18px;
       border: 4px solid var(--accent);
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      padding: 14px 10px; cursor: pointer; position: relative;
+      padding: 14px 10px 26px 10px; cursor: pointer; position: relative;
       transition: transform 0.08s ease, background 0.15s, box-shadow 0.15s;
       min-height: var(--tile-height); text-align: center;
     }
@@ -178,6 +187,20 @@
     .tile-label {
       font-size: var(--tile-font); font-weight: 800; line-height: 1.15; pointer-events: none;
     }
+
+    /* Sub-Board Link & Smart Home Action Pills on Tiles */
+    .tile-meta-row {
+      position: absolute; bottom: 5px; left: 8px; right: 8px;
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+      pointer-events: none; flex-wrap: nowrap; overflow: hidden;
+    }
+    .tile-pill {
+      font-size: 0.72rem; font-weight: 800; padding: 2px 7px;
+      border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .pill-jump { background: rgba(56, 189, 248, 0.22); color: #7dd3fc; border: 1px solid #0284c7; }
+    .pill-iot { background: rgba(249, 115, 22, 0.25); color: #fdba74; border: 1px solid #ea580c; }
+
     .tile-badge {
       position: absolute; top: 6px; border: none;
       width: 32px; height: 32px; border-radius: 50%;
@@ -194,6 +217,15 @@
     }
     body.edit-mode .add-tile-card { display: flex; }
 
+    /* Toast Notification for Smart Home Triggers */
+    #iotToast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: #0f172a; border: 2px solid var(--orange); color: #fff;
+      padding: 10px 18px; border-radius: 12px; font-weight: 800; font-size: 0.95rem;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.7); z-index: 4000;
+      display: none; align-items: center; gap: 8px;
+    }
+
     /* Modals */
     .modal-backdrop {
       position: fixed; inset: 0; background: rgba(0,0,0,0.82);
@@ -202,12 +234,17 @@
     .modal-backdrop.open { display: flex; }
     .modal {
       background: var(--panel); padding: 20px; border-radius: 16px;
-      width: 92%; max-width: 500px; border: 2px solid #475569;
+      width: 92%; max-width: 520px; border: 2px solid #475569;
       display: flex; flex-direction: column; gap: 11px; max-height: 92dvh; overflow-y: auto;
     }
     .modal h2 { margin: 0 0 2px 0; font-size: 1.25rem; }
+    .section-box {
+      background: rgba(15, 23, 42, 0.55); border: 1px solid #334155;
+      border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .section-box h3 { margin: 0; font-size: 0.95rem; color: var(--accent); }
     .field { display: flex; flex-direction: column; gap: 4px; }
-    .field label { font-weight: 700; font-size: 0.88rem; color: #cbd5e1; }
+    .field label { font-weight: 700; font-size: 0.86rem; color: #cbd5e1; }
     .field input, .field select {
       padding: 9px; border-radius: 8px; border: 1px solid #475569;
       background: #0f172a; color: #fff; font-size: 0.95rem;
@@ -230,7 +267,7 @@
     @keyframes pulse { 50% { opacity: 0.6; } }
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 
-    /* Bluey Character Fixation Calibration Screen (No Text Labels) */
+    /* Bluey Character Fixation Calibration Screen */
     #calibrationOverlay {
       position: fixed; inset: 0; background: rgba(10, 15, 29, 0.96);
       display: none; z-index: 5000; flex-direction: column;
@@ -289,6 +326,9 @@
   <!-- Floating Gaze Reticle -->
   <div id="gazePointer"></div>
 
+  <!-- Smart Home Action Feedback Toast -->
+  <div id="iotToast">⚡ Sending Command...</div>
+
   <!-- Bottom-Right Camera Preview -->
   <div id="camPreviewBox">
     <video id="camVideo" autoplay playsinline muted></video>
@@ -305,6 +345,7 @@
       </div>
       <div class="control-group">
         <button class="action-btn" onclick="cycleTileSize()">📐 Size</button>
+        <button id="iotHubBtn" class="action-btn btn-hub" style="display:none;" onclick="openSmartHubModal()">💡 Smart Home</button>
         <button id="syncBtn" class="action-btn" style="display:none;" onclick="openSyncModal()">💾 Backup</button>
         <button id="lockBtn" class="action-btn btn-lock" onclick="toggleEditMode()">🔒 Locked</button>
       </div>
@@ -324,51 +365,223 @@
   <!-- Main Communication Grid -->
   <div id="boardGrid" class="board-grid"></div>
 
-  <!-- Add / Edit Tile Modal -->
+  <!-- Add / Edit Tile Modal (Now with Board Jump & Smart Home Controls!) -->
   <div id="tileModal" class="modal-backdrop">
     <div class="modal">
       <h2 id="tileModalTitle">Add Communication Tile</h2>
       <div class="field">
         <label>Word or Phrase (Spoken & Shown)</label>
-        <input type="text" id="tileLabel" placeholder="e.g., More Water" />
+        <input type="text" id="tileLabel" placeholder="e.g., Turn On Bluey" />
       </div>
-      <div class="field">
-        <label>Board / Category</label>
-        <select id="tileCategorySelect"></select>
+      <div class="rec-row">
+        <div class="field" style="flex:1;">
+          <label>Board / Category</label>
+          <select id="tileCategorySelect"></select>
+        </div>
+        <div class="field" style="width:95px;">
+          <label>Emoji Icon</label>
+          <input type="text" id="tileEmoji" placeholder="💧" value="⭐" />
+        </div>
       </div>
-      <div class="field">
-        <label>Emoji Icon (used if no photo is set)</label>
-        <input type="text" id="tileEmoji" placeholder="💧" value="⭐" />
+
+      <!-- NEW: Dynamic Board Navigation / Folder Linking -->
+      <div class="section-box">
+        <h3>📂 Board Navigation (Optional)</h3>
+        <div class="field">
+          <label>After speaking this tile, automatically switch to:</label>
+          <select id="tileTargetBoardSelect">
+            <option value="">-- Stay on Current Board --</option>
+          </select>
+        </div>
       </div>
+
+      <!-- NEW: Smart Home / Environmental Control (Hue & Smart TV) -->
+      <div class="section-box">
+        <h3>💡 Smart Home / Environment Action (Optional)</h3>
+        <div class="field">
+          <label>Device Action When Pressed</label>
+          <select id="tileIotType" onchange="updateIotFieldsUI()">
+            <option value="none">None (Speech & Board Navigation Only)</option>
+            <option value="hue_light">💡 Philips Hue: Control Single Light Bulb</option>
+            <option value="hue_group">💡 Philips Hue: Control Room / Light Group</option>
+            <option value="roku_tv">📺 Roku / Smart TV: Launch Show or Power</option>
+            <option value="webhook">🌐 Custom Local Webhook / Home Assistant URL</option>
+          </select>
+        </div>
+
+        <!-- Philips Hue Fields -->
+        <div id="iotHueFields" style="display:none; flex-direction:column; gap:8px;">
+          <div class="rec-row">
+            <div class="field" style="flex:1;">
+              <label id="hueTargetLabel">Hue Light or Room ID #</label>
+              <input type="text" id="hueTargetId" placeholder="e.g., 1" value="1" />
+            </div>
+            <div class="field" style="flex:1.4;">
+              <label>Light Command</label>
+              <select id="hueCommand" onchange="updateIotFieldsUI()">
+                <option value="toggle">🔄 Toggle ON / OFF</option>
+                <option value="on">☀️ Turn ON (Bright)</option>
+                <option value="off">🌙 Turn OFF</option>
+                <option value="color">🎨 Set Color / Nightlight</option>
+              </select>
+            </div>
+          </div>
+          <div id="hueColorRow" class="rec-row" style="display:none;">
+            <div class="field" style="flex:1;">
+              <label>Color Preset</label>
+              <select id="hueColorPreset">
+                <option value="warm">Warm Relaxing (Orange/Gold)</option>
+                <option value="blue">Calm Blue (Bluey Theme)</option>
+                <option value="purple">Cozy Purple</option>
+                <option value="green">Soft Green</option>
+                <option value="red">Dim Red Nightlight</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1;">
+              <label>Brightness (1 - 254)</label>
+              <input type="number" id="hueBri" min="1" max="254" value="200" />
+            </div>
+          </div>
+          <span style="font-size:0.78rem; color:#94a3b8;">
+            Tip: Use the <b>💡 Smart Home</b> button on the top bar to pair your Hue Bridge IP & find Light IDs.
+          </span>
+        </div>
+
+        <!-- Roku / Smart TV Fields -->
+        <div id="iotRokuFields" style="display:none; flex-direction:column; gap:8px;">
+          <div class="rec-row">
+            <div class="field" style="flex:1;">
+              <label>TV Command / App</label>
+              <select id="rokuCommand">
+                <option value="launch/291097">▶️ Launch Disney+ (Bluey)</option>
+                <option value="launch/837">▶️ Launch YouTube</option>
+                <option value="launch/12">▶️ Launch Netflix</option>
+                <option value="launch/2285">▶️ Launch Hulu</option>
+                <option value="keypress/Power">⚡ Power ON / OFF Toggle</option>
+                <option value="keypress/Play">⏯️ Play / Pause Current Show</option>
+                <option value="keypress/VolumeUp">🔊 Volume Up</option>
+                <option value="keypress/VolumeDown">🔉 Volume Down</option>
+                <option value="keypress/Home">🏠 TV Home Screen</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1;">
+              <label>TV IP (or uses Default)</label>
+              <input type="text" id="rokuCustomIp" placeholder="Uses Smart Home Hub IP" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Generic Webhook / Home Assistant Fields -->
+        <div id="iotWebhookFields" style="display:none; flex-direction:column; gap:8px;">
+          <div class="rec-row">
+            <div class="field" style="width:105px;">
+              <label>HTTP Method</label>
+              <select id="webhookMethod">
+                <option value="POST">POST</option>
+                <option value="GET">GET</option>
+                <option value="PUT">PUT</option>
+              </select>
+            </div>
+            <div class="field" style="flex:1;">
+              <label>Full Local or Webhook URL</label>
+              <input type="text" id="webhookUrl" placeholder="http://192.168.1.50:8123/api/webhook/..." />
+            </div>
+          </div>
+          <div class="field">
+            <label>Optional JSON Body (for PUT/POST)</label>
+            <input type="text" id="webhookBody" placeholder='{"on": true}' />
+          </div>
+        </div>
+      </div>
+
       <div class="field">
         <label>Custom Photo (Optional - overrides Emoji)</label>
         <div class="rec-row">
           <input type="file" id="tileImage" accept="image/*" style="flex:1;" />
           <button type="button" id="clearImageBtn" class="btn-small-reset" style="display:none;" onclick="clearTilePhoto()">Use Emoji</button>
         </div>
-        <span id="imgStatus" style="font-size:0.85rem; color:#94a3b8;">Using Emoji icon</span>
+        <span id="imgStatus" style="font-size:0.82rem; color:#94a3b8;">Using Emoji icon</span>
       </div>
-      <div class="field">
-        <label>Border Color (Visual Grouping)</label>
-        <select id="tileColor">
-          <option value="#22c55e">Green (Core / Action / Yes)</option>
-          <option value="#38bdf8">Blue (Drink / Needs / Places)</option>
-          <option value="#eab308">Yellow (Food / Snacks / Play)</option>
-          <option value="#ef4444">Red (Stop / No / Help / Hurt)</option>
-          <option value="#a855f7">Purple (Feelings / People)</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>Custom Voice Recording (Optional - overrides TTS)</label>
-        <div class="rec-row">
-          <button type="button" id="recordBtn" class="btn-record" onclick="toggleRecording()">🎙️ Record Voice</button>
-          <button type="button" id="clearAudioBtn" class="btn-small-reset" style="display:none;" onclick="clearTileAudio()">Reset TTS</button>
+      <div class="rec-row">
+        <div class="field" style="flex:1;">
+          <label>Border Color</label>
+          <select id="tileColor">
+            <option value="#22c55e">Green (Yes / Go)</option>
+            <option value="#38bdf8">Blue (Needs / Water)</option>
+            <option value="#eab308">Yellow (Food / Play)</option>
+            <option value="#ef4444">Red (Stop / Help)</option>
+            <option value="#a855f7">Purple (Shows / Fun)</option>
+            <option value="#f97316">Orange (Smart Home)</option>
+          </select>
         </div>
-        <span id="recStatus" style="font-size:0.85rem; color:#94a3b8;">Using Default TTS Voice</span>
+        <div class="field" style="flex:1.2;">
+          <label>Custom Voice Recording</label>
+          <div class="rec-row">
+            <button type="button" id="recordBtn" class="btn-record" onclick="toggleRecording()">🎙️ Record</button>
+            <button type="button" id="clearAudioBtn" class="btn-small-reset" style="display:none;" onclick="clearTileAudio()">Reset</button>
+          </div>
+        </div>
       </div>
+      <span id="recStatus" style="font-size:0.82rem; color:#94a3b8;">Using Default TTS Voice</span>
+
       <div class="modal-actions">
         <button class="action-btn" onclick="closeTileModal()">Cancel</button>
         <button class="action-btn btn-speak" style="height:42px;" onclick="saveNewTile()">Save Tile</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- NEW: Smart Home Setup & Philips Hue Pairing Modal -->
+  <div id="smartHubModal" class="modal-backdrop">
+    <div class="modal">
+      <h2>💡 Smart Home Setup (Local Wi-Fi)</h2>
+      <p style="margin:0; font-size:0.86rem; color:#cbd5e1;">
+        Connect directly to your Philips Hue Bridge and Smart TVs over your home Wi-Fi—zero cloud accounts or subscriptions required.
+      </p>
+
+      <div class="section-box">
+        <h3>1. Philips Hue Bridge Setup</h3>
+        <div class="rec-row">
+          <div class="field" style="flex:1;">
+            <label>Hue Bridge IP Address</label>
+            <input type="text" id="hubHueIp" placeholder="e.g., 192.168.1.100" />
+          </div>
+          <button class="action-btn" style="margin-top:18px; background:#0284c7;" onclick="discoverHueBridge()">🔍 Auto-Find IP</button>
+        </div>
+        <div class="field">
+          <label>Hue Local API Key (Auto-filled when paired)</label>
+          <input type="text" id="hubHueKey" placeholder="Press physical bridge button, then click Pair below" />
+        </div>
+        <div class="rec-row">
+          <button class="action-btn btn-speak" style="flex:1; height:42px;" onclick="pairHueBridge()">
+            🔗 Step 1: Press Bridge Button, Then Click Here to Pair
+          </button>
+          <button class="action-btn" style="height:42px;" onclick="listHueLights()">📋 View Light IDs</button>
+        </div>
+        <div id="huePairStatus" style="font-size:0.83rem; color:#94a3b8; max-height:110px; overflow-y:auto;"></div>
+      </div>
+
+      <div class="section-box">
+        <h3>2. Smart TV / Roku Default IP</h3>
+        <div class="field">
+          <label>Living Room / Bedroom Roku TV IP Address</label>
+          <input type="text" id="hubRokuIp" placeholder="e.g., 192.168.1.125" />
+        </div>
+        <span style="font-size:0.78rem; color:#94a3b8;">
+          Find on TV under: <b>Settings &gt; Network &gt; About</b> (Enable "Control by mobile apps" under System &gt; Advanced system settings).
+        </span>
+      </div>
+
+      <div class="section-box" style="border-color:#eab308;">
+        <h3 style="color:#fde047;">🔓 One-Time Browser Note for GitHub Pages (HTTPS)</h3>
+        <span style="font-size:0.8rem; color:#cbd5e1; line-height:1.35;">
+          Because GitHub Pages uses <b>https://</b> and local Hue Bridges/TVs use <b>http://192.168.x.x</b>, tap the tune/lock icon in your Chrome address bar &rarr; <b>Site settings</b> &rarr; set <b>Insecure content</b> (and Local network access) to <b>Allow</b> so Chrome permits local Wi-Fi commands.
+        </span>
+      </div>
+
+      <div class="modal-actions">
+        <button class="action-btn" onclick="closeSmartHubModal()">Close</button>
+        <button class="action-btn btn-speak" style="height:42px;" onclick="saveSmartHubSettings()">Save Hub Settings</button>
       </div>
     </div>
   </div>
@@ -457,7 +670,7 @@
     <div class="modal">
       <h2>Multi-Device Backup & Sync</h2>
       <p style="margin:0; font-size:0.95rem; color:#cbd5e1;">
-        Export all custom boards, photos, and recorded voice clips to a single file or import onto another device.
+        Export all custom boards, photos, smart home tiles, and recorded voice clips to a single file or import onto another device.
       </p>
       <button class="action-btn btn-speak" style="justify-content:center;" onclick="exportBoardData()">⬇️ Export All Boards & Tiles (.json)</button>
       <div class="field" style="margin-top:8px;">
