@@ -12,19 +12,20 @@ const DEFAULT_BOARDS = [
 const DEFAULT_TILES = [
   { id: '1', category: 'Core Needs', label: 'Yes / Please', emoji: '✅', color: '#22c55e' },
   { id: '2', category: 'Core Needs', label: 'No / All Done', emoji: '🛑', color: '#ef4444' },
-  { id: '3', category: 'Core Needs', label: 'Help Me', emoji: '🤝', color: '#eab308' },
-  { id: '4', category: 'Core Needs', label: 'Drink / Thirsty', emoji: '🥤', color: '#38bdf8', targetBoard: 'Mealtime' },
-  { id: '5', category: 'Core Needs', label: 'Hungry', emoji: '🍎', color: '#eab308', targetBoard: 'Mealtime' },
-  { id: '6', category: 'Core Needs', label: 'Bathroom', emoji: '🚽', color: '#38bdf8' },
+  { id: '3', category: 'Core Needs', label: 'Help Me', emoji: '🤝', color: '#eab308', sendPage: true, iotAction: { type: 'pager_urgent' } },
+  { id: '4', category: 'Core Needs', label: 'Drink / Thirsty', emoji: '🥤', color: '#38bdf8', targetBoard: 'Mealtime', sendPage: true },
+  { id: '5', category: 'Core Needs', label: 'Hungry', emoji: '🍎', color: '#eab308', targetBoard: 'Mealtime', sendPage: true },
+  { id: '6', category: 'Core Needs', label: 'Bathroom', emoji: '🚽', color: '#38bdf8', sendPage: true },
   { id: '15', category: 'Core Needs', label: 'My Room & TV', emoji: '📺', color: '#f97316', targetBoard: 'My Room & TV' },
+  { id: '20', category: 'Core Needs', label: 'Page Mom & Dad', emoji: '📲', color: '#ec4899', sendPage: true, iotAction: { type: 'pager_urgent' } },
   { id: '7', category: 'Mealtime', label: 'More Please', emoji: '➕', color: '#22c55e' },
-  { id: '8', category: 'Mealtime', label: 'Water', emoji: '💧', color: '#38bdf8' },
-  { id: '9', category: 'Mealtime', label: 'Favorite Snack', emoji: '🥨', color: '#eab308' },
+  { id: '8', category: 'Mealtime', label: 'Water', emoji: '💧', color: '#38bdf8', sendPage: true },
+  { id: '9', category: 'Mealtime', label: 'Favorite Snack', emoji: '🥨', color: '#eab308', sendPage: true },
   { id: '10', category: 'Play & Fun', label: 'Outside', emoji: '🌳', color: '#22c55e' },
   { id: '11', category: 'Play & Fun', label: 'Watch Bluey', emoji: '🐾', color: '#a855f7', iotAction: { type: 'roku_tv', rokuCmd: 'launch/291097', customIp: '' } },
-  { id: '12', category: 'Comfort & Body', label: 'Too Loud', emoji: '🙉', color: '#ef4444' },
+  { id: '12', category: 'Comfort & Body', label: 'Too Loud', emoji: '🙉', color: '#ef4444', sendPage: true },
   { id: '13', category: 'Comfort & Body', label: 'Tired / Rest', emoji: '😴', color: '#a855f7' },
-  { id: '14', category: 'Comfort & Body', label: 'Something Hurts', emoji: '🩹', color: '#ef4444' },
+  { id: '14', category: 'Comfort & Body', label: 'Something Hurts', emoji: '🩹', color: '#ef4444', sendPage: true, iotAction: { type: 'pager_urgent' } },
   { id: '16', category: 'My Room & TV', label: 'Room Lights On/Off', emoji: '💡', color: '#eab308', iotAction: { type: 'hue_light', targetId: '1', command: 'toggle', colorPreset: 'warm', bri: 220 } },
   { id: '17', category: 'My Room & TV', label: 'Calm Blue Light', emoji: '🔵', color: '#38bdf8', iotAction: { type: 'hue_light', targetId: '1', command: 'color', colorPreset: 'blue', bri: 180 } },
   { id: '18', category: 'My Room & TV', label: 'Put On Bluey', emoji: '📺', color: '#a855f7', iotAction: { type: 'roku_tv', rokuCmd: 'launch/291097', customIp: '' } },
@@ -39,15 +40,24 @@ let stripItems = [];
 let editMode = false;
 let showSentenceBar = localStorage.getItem('vb_show_sentence') === 'true';
 
-// Local Smart Home Hub Config (Saved in localStorage)
+// 2-Choice "This or That" Split-Screen State
+let twoChoiceMode = localStorage.getItem('vb_two_choice') === 'true';
+let twoChoicePairIdx = 0;
+
+// Smart Home & Family Pager Hub Config
 let smartHubConfig = {
+  pagerTopic: 'vb-authement-' + Math.floor(1000 + Math.random() * 9000),
   hueIp: '',
   hueKey: '',
   rokuIp: ''
 };
 try {
   const savedHub = localStorage.getItem('vb_smart_hub');
-  if (savedHub) smartHubConfig = JSON.parse(savedHub);
+  if (savedHub) {
+    const parsed = JSON.parse(savedHub);
+    smartHubConfig = { ...smartHubConfig, ...parsed };
+  }
+  localStorage.setItem('vb_smart_hub', JSON.stringify(smartHubConfig));
 } catch (e) {}
 
 const SIZE_PRESETS = [
@@ -210,7 +220,7 @@ function playBlueyFanfare() {
   });
 }
 
-function showToast(msg, duration = 2200) {
+function showToast(msg, duration = 2400) {
   const t = document.getElementById('iotToast');
   if (!t) return;
   t.textContent = msg;
@@ -253,7 +263,6 @@ async function loadDataFromDB() {
         boards = [...DEFAULT_BOARDS];
       } else {
         boards = req.result.sort((a, b) => a.order - b.order);
-        // Ensure new "My Room & TV" board exists if upgrading from earlier build
         if (!boards.some(b => b.name === 'My Room & TV')) {
           const roomBoard = { id: 'b5', name: 'My Room & TV', order: boards.length + 1 };
           boards.push(roomBoard);
@@ -275,19 +284,30 @@ async function loadDataFromDB() {
         tiles = [...DEFAULT_TILES];
       } else {
         tiles = req.result;
-        // Auto-upgrade Hungry & Drink to link to Mealtime if they don't have a targetBoard yet
         tiles.forEach(t => {
-          if ((t.label === 'Hungry' || t.label === 'Drink / Thirsty') && t.targetBoard === undefined) {
+          let updated = false;
+          if ((t.label === 'Hungry' || t.label === 'Drink / Thirsty') && !t.targetBoard) {
             t.targetBoard = 'Mealtime';
-            saveTileToDB(t);
+            updated = true;
           }
+          if ((t.label === 'Help Me' || t.label === 'Something Hurts') && t.sendPage === undefined) {
+            t.sendPage = true;
+            updated = true;
+          }
+          if (updated) saveTileToDB(t);
         });
-        // Add starter Smart Room tiles if upgrading
         if (!tiles.some(t => t.category === 'My Room & TV')) {
           DEFAULT_TILES.filter(t => t.category === 'My Room & TV' || t.id === '15').forEach(t => {
             tiles.push(t);
             saveTileToDB(t);
           });
+        }
+        if (!tiles.some(t => t.id === '20')) {
+          const pageTile = DEFAULT_TILES.find(t => t.id === '20');
+          if (pageTile) {
+            tiles.push(pageTile);
+            saveTileToDB(pageTile);
+          }
         }
       }
       resolve();
@@ -350,6 +370,31 @@ function deleteTileFromDB(id) {
   });
 }
 
+// 2-Choice Split-Screen Mode Toggle & Pagination
+function applyTwoChoiceState() {
+  document.body.classList.toggle('two-choice-mode', twoChoiceMode);
+  const btn = document.getElementById('twoChoiceBtn');
+  if (btn) {
+    btn.textContent = twoChoiceMode ? '⚖️ 2-Choice: ON' : '⚖️ 2-Choice: OFF';
+    btn.classList.toggle('active', twoChoiceMode);
+  }
+}
+
+function toggleTwoChoiceMode() {
+  twoChoiceMode = !twoChoiceMode;
+  twoChoicePairIdx = 0;
+  localStorage.setItem('vb_two_choice', twoChoiceMode);
+  applyTwoChoiceState();
+  renderBoard();
+}
+
+function stepTwoChoicePair(delta) {
+  const filtered = tiles.filter(t => t.category === currentCategory);
+  const totalPairs = Math.max(1, Math.ceil(filtered.length / 2));
+  twoChoicePairIdx = (twoChoicePairIdx + delta + totalPairs) % totalPairs;
+  renderBoard();
+}
+
 function applySentenceBarState() {
   document.body.classList.toggle('show-sentence', showSentenceBar);
   const btn = document.getElementById('sentenceToggleBtn');
@@ -381,13 +426,13 @@ function renderCategories() {
 
   const homeBoardName = boards[0]?.name || 'Core Needs';
 
-  // Quick "🏠 Back to Core" button when viewing a sub-board
   if (currentCategory !== homeBoardName) {
     const homeBtn = document.createElement('button');
     homeBtn.className = 'home-jump-btn visible dwell-target';
     homeBtn.innerHTML = '⬅️ 🏠 Core';
     homeBtn.onclick = () => {
       currentCategory = homeBoardName;
+      twoChoicePairIdx = 0;
       renderCategories();
       renderBoard();
     };
@@ -435,6 +480,7 @@ function renderCategories() {
           if (currentCategory === board.name) {
             currentCategory = boards[0].name;
           }
+          twoChoicePairIdx = 0;
           renderCategories();
           renderBoard();
         }
@@ -444,6 +490,7 @@ function renderCategories() {
 
     btn.onclick = () => {
       currentCategory = board.name;
+      twoChoicePairIdx = 0;
       renderCategories();
       renderBoard();
     };
@@ -468,6 +515,7 @@ function renderCategories() {
     boards.push(newBoard);
     await saveBoardToDB(newBoard);
     currentCategory = cleanName;
+    twoChoicePairIdx = 0;
     renderCategories();
     renderBoard();
   };
@@ -478,8 +526,21 @@ function renderBoard() {
   const grid = document.getElementById('boardGrid');
   grid.innerHTML = '';
 
-  const filtered = tiles.filter(t => t.category === currentCategory);
-  filtered.forEach(tile => {
+  const allCategoryTiles = tiles.filter(t => t.category === currentCategory);
+  const totalPairs = Math.max(1, Math.ceil(allCategoryTiles.length / 2));
+  if (twoChoicePairIdx >= totalPairs) twoChoicePairIdx = 0;
+
+  const pairIndicator = document.getElementById('pairIndicator');
+  if (pairIndicator) {
+    pairIndicator.textContent = `Pair ${twoChoicePairIdx + 1} of ${totalPairs}`;
+  }
+
+  // If 2-Choice Mode is ON (and not in Edit Mode), show only the active pair of giant tiles
+  const visibleTiles = (twoChoiceMode && !editMode)
+    ? allCategoryTiles.slice(twoChoicePairIdx * 2, twoChoicePairIdx * 2 + 2)
+    : allCategoryTiles;
+
+  visibleTiles.forEach(tile => {
     const card = document.createElement('div');
     card.className = 'tile dwell-target';
     card.style.borderColor = tile.color || '#38bdf8';
@@ -523,10 +584,12 @@ function renderBoard() {
     label.textContent = tile.label;
     card.appendChild(label);
 
-    // Render Bottom Indicator Pills for Board Jump or Smart Home Action
+    // Bottom Indicator Pills for Board Jump, Pager, or Smart Home Action
     const hasJump = tile.targetBoard && tile.targetBoard.trim() !== '';
     const hasIot = tile.iotAction && tile.iotAction.type && tile.iotAction.type !== 'none';
-    if (hasJump || hasIot) {
+    const hasPage = Boolean(tile.sendPage) || (hasIot && tile.iotAction.type === 'pager_urgent');
+
+    if (hasJump || hasIot || hasPage) {
       const metaRow = document.createElement('div');
       metaRow.className = 'tile-meta-row';
       if (hasJump) {
@@ -535,7 +598,13 @@ function renderBoard() {
         jumpPill.textContent = `📂 ➔ ${tile.targetBoard}`;
         metaRow.appendChild(jumpPill);
       }
-      if (hasIot) {
+      if (hasPage) {
+        const pagePill = document.createElement('span');
+        pagePill.className = 'tile-pill pill-page';
+        pagePill.textContent = '📲 Pager';
+        metaRow.appendChild(pagePill);
+      }
+      if (hasIot && tile.iotAction.type !== 'pager_urgent') {
         const iotPill = document.createElement('span');
         iotPill.className = 'tile-pill pill-iot';
         const iotIcon = tile.iotAction.type.startsWith('hue') ? '💡 Hue' :
@@ -550,14 +619,16 @@ function renderBoard() {
     grid.appendChild(card);
   });
 
-  const addCard = document.createElement('div');
-  addCard.className = 'tile add-tile-card';
-  addCard.innerHTML = `<div class="tile-visual">➕</div><div class="tile-label">Add Tile</div>`;
-  addCard.onclick = () => openTileModal(null);
-  grid.appendChild(addCard);
+  if (editMode) {
+    const addCard = document.createElement('div');
+    addCard.className = 'tile add-tile-card';
+    addCard.innerHTML = `<div class="tile-visual">➕</div><div class="tile-label">Add Tile</div>`;
+    addCard.onclick = () => openTileModal(null);
+    grid.appendChild(addCard);
+  }
 }
 
-// 3. Speech, Board Jump & Smart Home Execution Engine
+// 3. Speech, Board Jump, Phone Pager & Smart Home Execution Engine
 function playTileAudio(tile) {
   if (tile.audioDataUrl) {
     const audio = new Audio(tile.audioDataUrl);
@@ -585,19 +656,58 @@ async function handleTileTap(tile, cardEl) {
     renderStrip();
   }
 
-  // 3. Trigger Smart Home Action (Philips Hue / Smart TV / Webhook) if configured
-  if (tile.iotAction && tile.iotAction.type && tile.iotAction.type !== 'none') {
+  // 3. Send Instant Family Pager Push Notification if enabled on this tile
+  const isUrgentPage = tile.iotAction && tile.iotAction.type === 'pager_urgent';
+  if (tile.sendPage || isUrgentPage) {
+    sendFamilyPagerAlert(tile.label, isUrgentPage);
+  }
+
+  // 4. Trigger Smart Home Action (Philips Hue / Smart TV / Webhook) if configured
+  if (tile.iotAction && tile.iotAction.type && tile.iotAction.type !== 'none' && tile.iotAction.type !== 'pager_urgent') {
     executeSmartHomeAction(tile.iotAction, tile.label);
   }
 
-  // 4. Switch to Target Board if configured (after a brief 420ms visual confirmation pause)
+  // 5. Switch to Target Board if configured
   if (tile.targetBoard && boards.some(b => b.name === tile.targetBoard)) {
     setTimeout(() => {
       currentCategory = tile.targetBoard;
+      twoChoicePairIdx = 0;
       renderCategories();
       renderBoard();
     }, 420);
   }
+}
+
+// Instant Push Notification to Mom/Dad's Phone via ntfy.sh (HTTPS, Zero Account Required)
+async function sendFamilyPagerAlert(tileLabel, isUrgent = false) {
+  const topic = (smartHubConfig.pagerTopic || '').trim();
+  if (!topic) {
+    showToast('⚠️ Set your Pager Channel in 💡 Smart Home & Pager!', 3000);
+    return;
+  }
+
+  try {
+    await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
+      method: 'POST',
+      headers: {
+        'Title': isUrgent ? `🚨 URGENT: ${tileLabel}` : `📲 VoiceBridge: ${tileLabel}`,
+        'Priority': isUrgent ? '5' : '4',
+        'Tags': isUrgent ? 'rotating_light,sos' : 'bell,speech_balloon'
+      },
+      body: `He pressed "${tileLabel}" on the ${currentCategory} board.`
+    });
+    showToast(`📲 Paged Family: "${tileLabel}"`);
+  } catch (err) {
+    showToast('⚠️ Pager offline (Check internet connection)', 2800);
+  }
+}
+
+async function sendTestPage() {
+  const inputTopic = document.getElementById('hubPagerTopic').value.trim();
+  if (!inputTopic) return alert('Please enter a Pager Channel name first.');
+  smartHubConfig.pagerTopic = inputTopic;
+  localStorage.setItem('vb_smart_hub', JSON.stringify(smartHubConfig));
+  await sendFamilyPagerAlert('Test Alert from VoiceBridge! 🎉', true);
 }
 
 // Execute Philips Hue, Roku Smart TV, or Webhook Locally over Home Wi-Fi
@@ -623,7 +733,6 @@ async function executeSmartHomeAction(iot, label) {
       } else if (iot.command === 'on') {
         bodyPayload = { on: true, bri: 254 };
       } else if (iot.command === 'toggle') {
-        // Query current light/group state to toggle cleanly
         try {
           const statusRes = await fetch(baseUrl);
           const statusData = await statusRes.json();
@@ -662,7 +771,6 @@ async function executeSmartHomeAction(iot, label) {
         return;
       }
       const cmd = iot.rokuCmd || 'keypress/Home';
-      // If launching a streaming channel like Disney+, wake the TV first!
       if (cmd.startsWith('launch/')) {
         fetch(`http://${tvIp}:8060/keypress/PowerOn`, { method: 'POST', mode: 'no-cors' }).catch(() => {});
       }
@@ -689,6 +797,7 @@ async function executeSmartHomeAction(iot, label) {
 
 // Smart Home Hub Setup & Philips Hue Bridge Pairing Functions
 function openSmartHubModal() {
+  document.getElementById('hubPagerTopic').value = smartHubConfig.pagerTopic || '';
   document.getElementById('hubHueIp').value = smartHubConfig.hueIp || '';
   document.getElementById('hubHueKey').value = smartHubConfig.hueKey || '';
   document.getElementById('hubRokuIp').value = smartHubConfig.rokuIp || '';
@@ -701,6 +810,7 @@ function closeSmartHubModal() {
 }
 
 function saveSmartHubSettings() {
+  smartHubConfig.pagerTopic = document.getElementById('hubPagerTopic').value.trim();
   smartHubConfig.hueIp = document.getElementById('hubHueIp').value.trim();
   smartHubConfig.hueKey = document.getElementById('hubHueKey').value.trim();
   smartHubConfig.rokuIp = document.getElementById('hubRokuIp').value.trim();
@@ -708,7 +818,7 @@ function saveSmartHubSettings() {
     localStorage.setItem('vb_smart_hub', JSON.stringify(smartHubConfig));
   } catch (e) {}
   closeSmartHubModal();
-  showToast('✅ Smart Home Hub Settings Saved!');
+  showToast('✅ Pager & Smart Home Settings Saved!');
 }
 
 async function discoverHueBridge() {
@@ -753,7 +863,7 @@ async function pairHueBridge() {
       statusEl.textContent = 'Unexpected response: ' + JSON.stringify(data);
     }
   } catch (err) {
-    statusEl.innerHTML = `<span style="color:#f87171;">⚠️ Connection blocked by browser HTTPS rules. See yellow box below to allow Insecure Content for local Wi-Fi, or run from launch_dev.bat.</span>`;
+    statusEl.innerHTML = `<span style="color:#f87171;">⚠️ Connection blocked by browser HTTPS rules. Allow Insecure Content in Site Settings for local Wi-Fi, or run from launch_dev.bat.</span>`;
   }
 }
 
@@ -797,7 +907,7 @@ function clearStrip() {
   renderStrip();
 }
 
-// 4. Eye-Gaze Engine
+// 4. Eye-Gaze Engine (With 2-Choice Left/Right Axis Lock Assist!)
 function openGazeModal() {
   document.getElementById('gazeModal').classList.add('open');
 }
@@ -1064,7 +1174,8 @@ function processVideoFrame() {
     }
 
     const normX = 0.5 + du;
-    const normY = 0.5 + dv;
+    // In 2-Choice Mode, stabilize vertical drift toward the center of the two giant Left/Right cards
+    const normY = (twoChoiceMode && !editMode) ? (0.52 + dv * 0.35) : (0.5 + dv);
 
     rawGazeX = Math.max(12, Math.min(window.innerWidth - 12, normX * window.innerWidth));
     rawGazeY = Math.max(12, Math.min(window.innerHeight - 12, normY * window.innerHeight));
@@ -1103,7 +1214,7 @@ function resetAllDwellVisuals() {
 
 function applyMagneticTileSnap(x, y) {
   if (snapStrength === 'off') return { x, y };
-  const pull = snapStrength === 'strong' ? 0.42 : 0.25;
+  const pull = (twoChoiceMode && !editMode) ? 0.48 : (snapStrength === 'strong' ? 0.42 : 0.25);
 
   const hitEl = document.elementFromPoint(x, y);
   const targetEl = hitEl ? hitEl.closest('.dwell-target') : null;
@@ -1433,24 +1544,19 @@ function finishCalibration() {
   document.getElementById('calibrationOverlay').classList.remove('open');
 }
 
-// 5. Parent Edit Mode, Tile Add/Edit Modal (with Board Jump & Smart Home), & Backup
+// 5. Parent Edit Mode, Tile Add/Edit Modal, & Backup
 function toggleEditMode() {
   editMode = !editMode;
   document.body.classList.toggle('edit-mode', editMode);
   const lockBtn = document.getElementById('lockBtn');
-  const syncBtn = document.getElementById('syncBtn');
-  const iotHubBtn = document.getElementById('iotHubBtn');
   if (editMode) {
     lockBtn.textContent = '🔓 Edit';
     lockBtn.classList.add('unlocked');
-    syncBtn.style.display = 'flex';
-    iotHubBtn.style.display = 'flex';
   } else {
     lockBtn.textContent = '🔒 Locked';
     lockBtn.classList.remove('unlocked');
-    syncBtn.style.display = 'none';
-    iotHubBtn.style.display = 'none';
   }
+  renderBoard();
 }
 
 function updateIotFieldsUI() {
@@ -1461,6 +1567,10 @@ function updateIotFieldsUI() {
     type === 'roku_tv' ? 'flex' : 'none';
   document.getElementById('iotWebhookFields').style.display =
     type === 'webhook' ? 'flex' : 'none';
+
+  if (type === 'pager_urgent') {
+    document.getElementById('tileSendPageCheck').checked = true;
+  }
 
   if (type === 'hue_light' || type === 'hue_group') {
     document.getElementById('hueTargetLabel').textContent =
@@ -1498,6 +1608,7 @@ function openTileModal(tileToEdit = null) {
     document.getElementById('tileEmoji').value = tileToEdit.emoji || '⭐';
     document.getElementById('tileColor').value = tileToEdit.color || '#38bdf8';
     targetBoardSelect.value = tileToEdit.targetBoard || '';
+    document.getElementById('tileSendPageCheck').checked = Boolean(tileToEdit.sendPage);
 
     const iot = tileToEdit.iotAction || { type: 'none' };
     document.getElementById('tileIotType').value = iot.type || 'none';
@@ -1521,6 +1632,7 @@ function openTileModal(tileToEdit = null) {
     document.getElementById('tileEmoji').value = '⭐';
     document.getElementById('tileColor').value = '#38bdf8';
     targetBoardSelect.value = '';
+    document.getElementById('tileSendPageCheck').checked = false;
 
     document.getElementById('tileIotType').value = 'none';
     document.getElementById('hueTargetId').value = '1';
@@ -1629,12 +1741,14 @@ async function saveNewTile() {
   const emoji = document.getElementById('tileEmoji').value.trim() || '⭐';
   const color = document.getElementById('tileColor').value;
   const targetBoard = document.getElementById('tileTargetBoardSelect').value || '';
+  const sendPage = document.getElementById('tileSendPageCheck').checked;
   const imgInput = document.getElementById('tileImage');
 
-  // Build Smart Home Action object
   const iotType = document.getElementById('tileIotType').value;
   let iotAction = { type: 'none' };
-  if (iotType === 'hue_light' || iotType === 'hue_group') {
+  if (iotType === 'pager_urgent') {
+    iotAction = { type: 'pager_urgent' };
+  } else if (iotType === 'hue_light' || iotType === 'hue_group') {
     iotAction = {
       type: iotType,
       targetId: document.getElementById('hueTargetId').value.trim() || '1',
@@ -1669,6 +1783,7 @@ async function saveNewTile() {
     emoji,
     color,
     targetBoard,
+    sendPage,
     iotAction,
     imageDataUrl: finalImageDataUrl,
     audioDataUrl: recordedAudioDataUrl
@@ -1716,7 +1831,7 @@ function importBoardData(event) {
       const importedBoards = Array.isArray(parsed) ? DEFAULT_BOARDS : (parsed.boards || DEFAULT_BOARDS);
       const importedTiles = Array.isArray(parsed) ? parsed : (parsed.tiles || []);
       if (parsed.smartHubConfig) {
-        smartHubConfig = parsed.smartHubConfig;
+        smartHubConfig = { ...smartHubConfig, ...parsed.smartHubConfig };
         localStorage.setItem('vb_smart_hub', JSON.stringify(smartHubConfig));
       }
 
@@ -1730,10 +1845,11 @@ function importBoardData(event) {
         boards = importedBoards;
         tiles = importedTiles;
         currentCategory = boards[0]?.name || 'Core Needs';
+        twoChoicePairIdx = 0;
         renderCategories();
         renderBoard();
         closeSyncModal();
-        alert('All custom boards, smart home settings, photos, and voices restored!');
+        alert('All custom boards, pager settings, photos, and voices restored!');
       };
     } catch (err) {
       alert('Invalid backup file.');
@@ -1746,6 +1862,7 @@ function importBoardData(event) {
 window.addEventListener('DOMContentLoaded', async () => {
   await initDB();
   await loadDataFromDB();
+  applyTwoChoiceState();
   applySentenceBarState();
   renderCategories();
   renderBoard();
